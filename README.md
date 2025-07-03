@@ -1,0 +1,287 @@
+# TurnsAPI - OpenRouter API 代理服务
+
+TurnsAPI 是一个用 Go 语言开发的高性能 API 代理服务，专门用于转发大模型请求到 OpenRouter API。它提供了智能的 API 密钥轮询系统、流式响应支持和实时监控功能。
+
+## 🚀 主要特性
+
+- **智能密钥轮询**: 支持轮询、随机和最少使用三种轮询策略
+- **流式响应支持**: 完全支持 Server-Sent Events (SSE) 流式响应
+- **高可用性**: 自动故障转移和重试机制
+- **实时监控**: Web 界面实时监控 API 密钥状态和服务性能
+- **安全认证**: 内置用户名密码认证系统，保护 API 和管理界面
+- **错误处理**: 智能错误处理和 API 密钥健康检查
+- **易于配置**: 基于 YAML 的配置文件
+
+## 📋 系统要求
+
+- Go 1.21 或更高版本
+- 有效的 OpenRouter API 密钥
+
+## 🛠️ 安装和配置
+
+### 1. 克隆项目
+
+```bash
+git clone <repository-url>
+cd TurnsApi
+```
+
+### 2. 安装依赖
+
+```bash
+go mod tidy
+```
+
+### 3. 配置 API 密钥
+
+编辑 `config/config.yaml` 文件，添加您的 OpenRouter API 密钥：
+
+```yaml
+api_keys:
+  keys:
+    - "sk-or-v1-your-real-api-key-1"
+    - "sk-or-v1-your-real-api-key-2"
+    - "sk-or-v1-your-real-api-key-3"
+    # 添加更多密钥...
+```
+
+### 4. 构建和运行
+
+```bash
+# 构建
+go build -o turnsapi cmd/turnsapi/main.go
+
+# 运行
+./turnsapi -config config/config.yaml
+```
+
+或者直接运行：
+
+```bash
+go run cmd/turnsapi/main.go -config config/config.yaml
+```
+
+## 🔧 配置说明
+
+### 服务器配置
+
+```yaml
+server:
+  port: 8080        # 服务端口
+  host: "0.0.0.0"   # 监听地址
+```
+
+### 认证配置
+
+```yaml
+auth:
+  enabled: true                 # 是否启用认证
+  username: "admin"             # 管理员用户名
+  password: "turnsapi123"       # 管理员密码（请修改）
+  session_timeout: "24h"        # 会话超时时间
+```
+
+### OpenRouter 配置
+
+```yaml
+openrouter:
+  base_url: "https://openrouter.ai/api/v1"  # OpenRouter API 基础 URL
+  timeout: 30s                              # 请求超时时间
+  max_retries: 3                            # 最大重试次数
+```
+
+### API 密钥配置
+
+```yaml
+api_keys:
+  keys:
+    - "your-api-key-1"
+    - "your-api-key-2"
+  rotation_strategy: "round_robin"    # 轮询策略: round_robin, random, least_used
+  health_check_interval: 60s          # 健康检查间隔
+```
+
+### 日志配置
+
+```yaml
+logging:
+  level: "info"           # 日志级别: debug, info, warn, error
+  file: "logs/turnsapi.log"
+  max_size: 100           # 日志文件最大大小 (MB)
+  max_backups: 3          # 保留的日志文件数量
+  max_age: 28             # 日志文件保留天数
+```
+
+## 📡 API 使用
+
+### 认证
+
+如果启用了认证，需要先登录获取访问令牌：
+
+```bash
+# 登录获取令牌
+curl -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "turnsapi123"
+  }'
+```
+
+响应示例：
+```json
+{
+  "success": true,
+  "token": "your-access-token",
+  "expires": "2024-01-02T12:00:00Z"
+}
+```
+
+### 聊天完成 API
+
+**端点**: `POST /api/v1/chat/completions`
+
+**请求示例**:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-access-token" \
+  -d '{
+    "model": "minimax/minimax-m1",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello, how are you?"
+      }
+    ],
+    "stream": false
+  }'
+```
+
+**流式请求示例**:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-access-token" \
+  -d '{
+    "model": "minimax/minimax-m1",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Tell me a story"
+      }
+    ],
+    "stream": true
+  }'
+```
+
+### 支持的参数
+
+| 参数 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `model` | string | 是 | 模型名称，如 `minimax/minimax-m1` |
+| `messages` | array | 是 | 对话消息数组 |
+| `stream` | boolean | 否 | 是否启用流式响应 |
+| `temperature` | number | 否 | 温度参数 (0-2) |
+| `max_tokens` | integer | 否 | 最大生成 token 数 |
+| `top_p` | number | 否 | Top-p 采样参数 |
+| `stop` | string/array | 否 | 停止词 |
+
+## 🖥️ Web 界面
+
+### 访问地址
+
+- **登录页面**: http://localhost:8080/auth/login
+- **首页**: http://localhost:8080/ （需要登录）
+- **仪表板**: http://localhost:8080/dashboard （需要登录）
+- **API 状态**: http://localhost:8080/admin/status （需要认证）
+- **密钥状态**: http://localhost:8080/admin/keys （需要认证）
+
+### 功能特性
+
+- 实时显示 API 密钥状态
+- 服务性能监控
+- 使用统计和错误统计
+- 自动刷新功能
+
+## 🔍 监控和管理
+
+### 健康检查
+
+```bash
+curl http://localhost:8080/health
+```
+
+### 服务状态
+
+```bash
+curl http://localhost:8080/admin/status
+```
+
+### 密钥状态
+
+```bash
+curl http://localhost:8080/admin/keys
+```
+
+## 🚨 故障排除
+
+### 常见问题
+
+1. **服务启动失败**
+   - 检查配置文件格式是否正确
+   - 确保端口未被占用
+   - 验证 API 密钥格式
+
+2. **API 请求失败**
+   - 检查 API 密钥是否有效
+   - 确认网络连接正常
+   - 查看日志文件获取详细错误信息
+
+3. **流式响应异常**
+   - 确保客户端支持 Server-Sent Events
+   - 检查防火墙和代理设置
+
+### 日志查看
+
+```bash
+# 查看实时日志
+tail -f logs/turnsapi.log
+
+# 查看错误日志
+grep "ERROR" logs/turnsapi.log
+```
+
+## 🔒 安全注意事项
+
+### 生产环境部署
+
+1. **修改默认密码**: 请务必修改配置文件中的默认用户名和密码
+2. **使用强密码**: 建议使用包含大小写字母、数字和特殊字符的强密码
+3. **启用 HTTPS**: 在生产环境中建议使用反向代理（如 Nginx）启用 HTTPS
+4. **定期更新密码**: 建议定期更新管理员密码
+5. **网络安全**: 限制管理界面的访问 IP 范围
+
+### 认证配置示例
+
+```yaml
+auth:
+  enabled: true
+  username: "your-admin-username"
+  password: "your-strong-password-123!"
+  session_timeout: "8h"
+```
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+MIT License
+
+## 📞 支持
+
+如有问题，请提交 Issue 或联系维护者。

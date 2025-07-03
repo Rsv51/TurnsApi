@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">TurnsAPI 仪表板</h1>
+                <p class="text-gray-600">实时监控API密钥状态和服务性能</p>
+            </div>
+            <div class="flex space-x-4">
+                <a href="/" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    返回首页
+                </a>
+                <button onclick="location.reload()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    刷新数据
+                </button>
+                <button onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    登出
+                </button>
+            </div>
+        </div>
+
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-green-100 rounded-lg">
+                        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">活跃密钥</p>
+                        <p class="text-2xl font-semibold text-gray-900">{{.active_count}}/{{.total_count}}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-blue-100 rounded-lg">
+                        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">总请求数</p>
+                        <p class="text-2xl font-semibold text-gray-900">{{.total_usage}}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-red-100 rounded-lg">
+                        <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">错误次数</p>
+                        <p class="text-2xl font-semibold text-gray-900">{{.total_errors}}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-purple-100 rounded-lg">
+                        <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">运行时间</p>
+                        <p class="text-2xl font-semibold text-gray-900" id="uptime">--</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Keys Status -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-bold mb-6">API 密钥状态</h2>
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto">
+                    <thead>
+                        <tr class="bg-gray-50">
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">密钥</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">使用次数</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">错误次数</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最后使用</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最后错误</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {{range $key, $status := .keys}}
+                        <tr>
+                            <td class="px-4 py-4 whitespace-nowrap">
+                                <code class="text-sm bg-gray-100 px-2 py-1 rounded">{{$status.Key}}</code>
+                            </td>
+                            <td class="px-4 py-4 whitespace-nowrap">
+                                {{if $status.IsActive}}
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                    <svg class="w-2 h-2 mr-1" fill="currentColor" viewBox="0 0 8 8">
+                                        <circle cx="4" cy="4" r="3"/>
+                                    </svg>
+                                    活跃
+                                </span>
+                                {{else}}
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                    <svg class="w-2 h-2 mr-1" fill="currentColor" viewBox="0 0 8 8">
+                                        <circle cx="4" cy="4" r="3"/>
+                                    </svg>
+                                    禁用
+                                </span>
+                                {{end}}
+                            </td>
+                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">{{$status.UsageCount}}</td>
+                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">{{$status.ErrorCount}}</td>
+                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{if $status.LastUsed.IsZero}}
+                                从未使用
+                                {{else}}
+                                {{$status.LastUsed.Format "2006-01-02 15:04:05"}}
+                                {{end}}
+                            </td>
+                            <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{if $status.LastError}}
+                                <span class="text-red-600 truncate max-w-xs" title="{{$status.LastError}}">{{$status.LastError}}</span>
+                                {{else}}
+                                无
+                                {{end}}
+                            </td>
+                            <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
+                                <button onclick="editKey('{{$status.Key}}', '{{$status.Name}}', '{{$status.Description}}', '{{range $i, $model := $status.AllowedModels}}{{if $i}},{{end}}{{$model}}{{end}}')"
+                                        class="text-indigo-600 hover:text-indigo-900 mr-3">编辑</button>
+                                <button onclick="deleteKey('{{$status.Key}}')"
+                                        class="text-red-600 hover:text-red-900">删除</button>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- API Key Management -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8" x-data="keyManagement()">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">API 密钥管理</h2>
+                <div class="space-x-2">
+                    <button @click="showAddKeyModal = true" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                        添加密钥
+                    </button>
+                    <button @click="showBatchAddModal = true" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                        批量添加
+                    </button>
+                </div>
+            </div>
+
+            <!-- Add Key Modal -->
+            <div x-show="showAddKeyModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" x-cloak>
+                <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                    <div class="mt-3">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">添加新的 API 密钥</h3>
+                        <form @submit.prevent="addKey()">
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">API 密钥</label>
+                                <input type="text" x-model="newKey.key" required
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="sk-or-...">
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">名称</label>
+                                <input type="text" x-model="newKey.name"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="密钥名称">
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                                <textarea x-model="newKey.description"
+                                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                          placeholder="密钥描述"></textarea>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">允许的模型</label>
+                                <div class="text-xs text-gray-500 mb-2">留空表示允许所有模型</div>
+                                <div class="max-h-40 overflow-y-auto border border-gray-300 rounded-md p-2">
+                                    <template x-for="model in availableModels" :key="model.id">
+                                        <label class="flex items-center space-x-2 py-1 hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox"
+                                                   :value="model.id"
+                                                   @change="toggleModel(model.id)"
+                                                   class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                            <span class="text-sm" x-text="model.name"></span>
+                                        </label>
+                                    </template>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1" x-show="selectedModels.length > 0">
+                                    已选择 <span x-text="selectedModels.length"></span> 个模型
+                                </div>
+                            </div>
+                            <div class="flex justify-end space-x-3">
+                                <button type="button" @click="showAddKeyModal = false"
+                                        class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                                    取消
+                                </button>
+                                <button type="submit"
+                                        class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+                                    添加
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Edit Key Modal -->
+            <div x-show="showEditKeyModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" x-cloak>
+                <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                    <div class="mt-3">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">编辑 API 密钥</h3>
+                        <form @submit.prevent="updateKey()">
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">API 密钥</label>
+                                <input type="text" x-model="newKey.key" readonly
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 focus:outline-none"
+                                       placeholder="sk-or-...">
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">名称</label>
+                                <input type="text" x-model="newKey.name"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                       placeholder="密钥名称">
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                                <textarea x-model="newKey.description"
+                                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                          placeholder="密钥描述"></textarea>
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">允许的模型</label>
+                                <div class="text-xs text-gray-500 mb-2">留空表示允许所有模型</div>
+                                <div class="max-h-40 overflow-y-auto border border-gray-300 rounded-md p-2">
+                                    <template x-for="model in availableModels" :key="model.id">
+                                        <label class="flex items-center space-x-2 py-1 hover:bg-gray-50 cursor-pointer">
+                                            <input type="checkbox"
+                                                   :value="model.id"
+                                                   :checked="selectedModels.includes(model.id)"
+                                                   @change="toggleModel(model.id)"
+                                                   class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                            <span class="text-sm" x-text="model.name"></span>
+                                        </label>
+                                    </template>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1" x-show="selectedModels.length > 0">
+                                    已选择 <span x-text="selectedModels.length"></span> 个模型
+                                </div>
+                            </div>
+                            <div class="flex justify-end space-x-3">
+                                <button type="button" @click="showEditKeyModal = false"
+                                        class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                                    取消
+                                </button>
+                                <button type="submit"
+                                        class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+                                    更新
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Batch Add Keys Modal -->
+            <div x-show="showBatchAddModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" x-cloak>
+                <div class="relative top-10 mx-auto p-5 border w-2/3 max-w-4xl shadow-lg rounded-md bg-white">
+                    <div class="mt-3">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">批量添加 API 密钥</h3>
+                        <form @submit.prevent="batchAddKeys()">
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">API 密钥列表</label>
+                                <textarea x-model="batchKeys" required rows="10"
+                                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                          placeholder="请输入API密钥，每行一个：&#10;sk-or-v1-...&#10;sk-or-v1-...&#10;sk-or-v1-..."></textarea>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    每行输入一个API密钥，空行将被忽略
+                                </div>
+                            </div>
+                            <div class="mb-4" x-show="batchResult">
+                                <div class="p-3 rounded-md" :class="batchResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'">
+                                    <p class="text-sm font-medium" :class="batchResult.success ? 'text-green-800' : 'text-red-800'" x-text="batchResult.message"></p>
+                                    <div x-show="batchResult.errors && batchResult.errors.length > 0" class="mt-2">
+                                        <p class="text-xs text-red-600 mb-1">错误详情：</p>
+                                        <ul class="text-xs text-red-600 list-disc list-inside">
+                                            <template x-for="error in batchResult.errors">
+                                                <li x-text="error"></li>
+                                            </template>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex justify-end space-x-3">
+                                <button type="button" @click="closeBatchAddModal()"
+                                        class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                                    取消
+                                </button>
+                                <button type="submit"
+                                        class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600">
+                                    批量添加
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Proxy Key Management -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8" x-data="proxyKeyManagement()">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">代理服务 API 密钥</h2>
+                <button @click="showGenerateKeyModal = true" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    生成密钥
+                </button>
+            </div>
+
+            <!-- Proxy Keys Table -->
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto">
+                    <thead>
+                        <tr class="bg-gray-50">
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">密钥</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名称</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">使用次数</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">创建时间</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="key in proxyKeys" :key="key.id">
+                            <tr>
+                                <td class="px-4 py-4 whitespace-nowrap">
+                                    <code class="text-sm bg-gray-100 px-2 py-1 rounded" x-text="key.key"></code>
+                                </td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="key.name"></td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="key.usage_count"></td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(key.created_at)"></td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
+                                    <button @click="deleteProxyKey(key.id)"
+                                            class="text-red-600 hover:text-red-900">删除</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Generate Key Modal -->
+            <div x-show="showGenerateKeyModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" x-cloak>
+                <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                    <div class="mt-3">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">生成代理服务 API 密钥</h3>
+                        <form @submit.prevent="generateProxyKey()">
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">名称</label>
+                                <input type="text" x-model="newProxyKey.name" required
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                       placeholder="密钥名称">
+                            </div>
+                            <div class="mb-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                                <textarea x-model="newProxyKey.description"
+                                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                          placeholder="密钥描述"></textarea>
+                            </div>
+                            <div class="flex justify-end space-x-3">
+                                <button type="button" @click="showGenerateKeyModal = false"
+                                        class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                                    取消
+                                </button>
+                                <button type="submit"
+                                        class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600">
+                                    生成
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Real-time Updates -->
+        <div class="bg-white rounded-lg shadow-md p-6" x-data="dashboard()">
+            <h2 class="text-xl font-bold mb-6">实时状态</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h3 class="text-lg font-medium mb-4">服务状态</h3>
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <span>服务状态:</span>
+                            <span class="font-medium" :class="status.healthy ? 'text-green-600' : 'text-red-600'" x-text="status.healthy ? '正常' : '异常'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>最后更新:</span>
+                            <span class="text-sm text-gray-500" x-text="status.lastUpdate"></span>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-lg font-medium mb-4">操作</h3>
+                    <div class="space-y-2">
+                        <button @click="refreshStatus()" class="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                            刷新状态
+                        </button>
+                        <button @click="toggleAutoRefresh()" class="w-full border border-gray-300 hover:bg-gray-50 px-4 py-2 rounded-lg transition duration-200" :class="autoRefresh ? 'bg-green-50 border-green-300' : ''">
+                            <span x-text="autoRefresh ? '停止自动刷新' : '开启自动刷新'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API密钥管理组件
+        function keyManagement() {
+            return {
+                showAddKeyModal: false,
+                showEditKeyModal: false,
+                showBatchAddModal: false,
+                availableModels: [],
+                selectedModels: [],
+                editingKey: null,
+                batchKeys: '',
+                batchResult: null,
+                newKey: {
+                    key: '',
+                    name: '',
+                    description: '',
+                    allowed_models: []
+                },
+                async loadAvailableModels() {
+                    try {
+                        const response = await fetch('/admin/available-models');
+                        const result = await response.json();
+                        if (result.data) {
+                            this.availableModels = result.data.map(model => ({
+                                id: model.id,
+                                name: model.name || model.id
+                            }));
+                        }
+                    } catch (error) {
+                        console.error('Load models error:', error);
+                    }
+                },
+                toggleModel(modelId) {
+                    const index = this.selectedModels.indexOf(modelId);
+                    if (index > -1) {
+                        this.selectedModels.splice(index, 1);
+                    } else {
+                        this.selectedModels.push(modelId);
+                    }
+                    this.newKey.allowed_models = [...this.selectedModels];
+                },
+                async addKey() {
+                    try {
+                        const response = await fetch('/admin/keys', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(this.newKey)
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            alert('API密钥添加成功！');
+                            this.showAddKeyModal = false;
+                            this.newKey = { key: '', name: '', description: '', allowed_models: [] };
+                            this.selectedModels = [];
+                            location.reload(); // 刷新页面显示新密钥
+                        } else {
+                            alert('添加失败: ' + (result.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('Add key error:', error);
+                        alert('网络错误，请检查连接');
+                    }
+                },
+                async batchAddKeys() {
+                    try {
+                        // 解析密钥列表
+                        const keys = this.batchKeys.split('\n')
+                            .map(key => key.trim())
+                            .filter(key => key.length > 0);
+
+                        if (keys.length === 0) {
+                            alert('请输入至少一个API密钥');
+                            return;
+                        }
+
+                        const response = await fetch('/admin/keys/batch', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ keys: keys })
+                        });
+
+                        const result = await response.json();
+                        this.batchResult = result;
+
+                        if (result.success) {
+                            // 如果全部成功，3秒后自动关闭并刷新
+                            if (result.skipped_count === 0) {
+                                setTimeout(() => {
+                                    this.closeBatchAddModal();
+                                    location.reload();
+                                }, 3000);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Batch add keys error:', error);
+                        this.batchResult = {
+                            success: false,
+                            message: '网络错误，请检查连接'
+                        };
+                    }
+                },
+                closeBatchAddModal() {
+                    this.showBatchAddModal = false;
+                    this.batchKeys = '';
+                    this.batchResult = null;
+                },
+                async editKey(keyId, name, description, allowedModels = []) {
+                    this.editingKey = keyId;
+                    this.newKey = {
+                        key: keyId,
+                        name: name || '',
+                        description: description || '',
+                        allowed_models: allowedModels || []
+                    };
+                    this.selectedModels = [...(allowedModels || [])];
+                    this.showEditKeyModal = true;
+                },
+                async updateKey() {
+                    try {
+                        const response = await fetch(`/admin/keys/${encodeURIComponent(this.editingKey)}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                name: this.newKey.name,
+                                description: this.newKey.description,
+                                allowed_models: this.newKey.allowed_models
+                            })
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            alert('API密钥更新成功！');
+                            this.showEditKeyModal = false;
+                            this.editingKey = null;
+                            this.newKey = { key: '', name: '', description: '', allowed_models: [] };
+                            this.selectedModels = [];
+                            location.reload();
+                        } else {
+                            alert('更新失败: ' + (result.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('Update key error:', error);
+                        alert('网络错误，请检查连接');
+                    }
+                },
+                async deleteKey(keyId) {
+                    if (!confirm('确定要删除这个API密钥吗？此操作不可撤销。')) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`/admin/keys/${encodeURIComponent(keyId)}`, {
+                            method: 'DELETE'
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            alert('API密钥删除成功！');
+                            location.reload();
+                        } else {
+                            alert('删除失败: ' + (result.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('Delete key error:', error);
+                        alert('网络错误，请检查连接');
+                    }
+                },
+                init() {
+                    this.loadAvailableModels();
+                }
+            }
+        }
+
+        // 代理密钥管理组件
+        function proxyKeyManagement() {
+            return {
+                showGenerateKeyModal: false,
+                proxyKeys: [],
+                newProxyKey: {
+                    name: '',
+                    description: ''
+                },
+                async init() {
+                    await this.loadProxyKeys();
+                },
+                async loadProxyKeys() {
+                    try {
+                        const response = await fetch('/admin/proxy-keys');
+                        const result = await response.json();
+                        if (result.success) {
+                            this.proxyKeys = result.keys || [];
+                        }
+                    } catch (error) {
+                        console.error('Load proxy keys error:', error);
+                    }
+                },
+                async generateProxyKey() {
+                    try {
+                        const response = await fetch('/admin/proxy-keys', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(this.newProxyKey)
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            alert('代理服务API密钥生成成功！\n密钥: ' + result.key.key);
+                            this.showGenerateKeyModal = false;
+                            this.newProxyKey = { name: '', description: '' };
+                            await this.loadProxyKeys(); // 重新加载列表
+                        } else {
+                            alert('生成失败: ' + (result.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('Generate proxy key error:', error);
+                        alert('网络错误，请检查连接');
+                    }
+                },
+                async deleteProxyKey(keyId) {
+                    if (!confirm('确定要删除这个代理服务API密钥吗？')) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`/admin/proxy-keys/${keyId}`, {
+                            method: 'DELETE'
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            alert('代理服务API密钥删除成功！');
+                            await this.loadProxyKeys(); // 重新加载列表
+                        } else {
+                            alert('删除失败: ' + (result.error || '未知错误'));
+                        }
+                    } catch (error) {
+                        console.error('Delete proxy key error:', error);
+                        alert('网络错误，请检查连接');
+                    }
+                },
+                formatDate(dateStr) {
+                    if (!dateStr) return '未知';
+                    const date = new Date(dateStr);
+                    return date.toLocaleString('zh-CN');
+                }
+            }
+        }
+
+        function dashboard() {
+            return {
+                status: {
+                    healthy: true,
+                    lastUpdate: new Date().toLocaleString()
+                },
+                autoRefresh: false,
+                refreshInterval: null,
+                
+                async refreshStatus() {
+                    try {
+                        const response = await fetch('/admin/status');
+                        const data = await response.json();
+                        this.status.healthy = response.ok;
+                        this.status.lastUpdate = new Date().toLocaleString();
+                    } catch (error) {
+                        this.status.healthy = false;
+                        this.status.lastUpdate = new Date().toLocaleString();
+                    }
+                },
+                
+                toggleAutoRefresh() {
+                    this.autoRefresh = !this.autoRefresh;
+                    if (this.autoRefresh) {
+                        this.refreshInterval = setInterval(() => {
+                            this.refreshStatus();
+                        }, 30000); // 30秒刷新一次
+                    } else {
+                        if (this.refreshInterval) {
+                            clearInterval(this.refreshInterval);
+                            this.refreshInterval = null;
+                        }
+                    }
+                },
+                
+                init() {
+                    this.refreshStatus();
+                }
+            }
+        }
+        
+        // 更新运行时间显示
+        function updateUptime() {
+            const startTime = new Date();
+            setInterval(() => {
+                const now = new Date();
+                const diff = now - startTime;
+                const hours = Math.floor(diff / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+                document.getElementById('uptime').textContent = `${hours}h ${minutes}m ${seconds}s`;
+            }, 1000);
+        }
+        
+        // 登出函数
+        async function logout() {
+            try {
+                const response = await fetch('/auth/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                if (response.ok) {
+                    window.location.href = '/auth/login';
+                } else {
+                    alert('登出失败，请重试');
+                }
+            } catch (error) {
+                console.error('Logout error:', error);
+                alert('网络错误，请检查连接');
+            }
+        }
+
+        // 全局编辑和删除函数
+        function editKey(keyId, name, description, allowedModels) {
+            // 获取keyManagement组件实例并调用editKey方法
+            const keyMgmtElement = document.querySelector('[x-data*="keyManagement"]');
+            if (keyMgmtElement && keyMgmtElement._x_dataStack) {
+                const keyMgmt = keyMgmtElement._x_dataStack[0];
+                if (keyMgmt && keyMgmt.editKey) {
+                    keyMgmt.editKey(keyId, name, description, allowedModels ? allowedModels.split(',') : []);
+                }
+            }
+        }
+
+        function deleteKey(keyId) {
+            // 获取keyManagement组件实例并调用deleteKey方法
+            const keyMgmtElement = document.querySelector('[x-data*="keyManagement"]');
+            if (keyMgmtElement && keyMgmtElement._x_dataStack) {
+                const keyMgmt = keyMgmtElement._x_dataStack[0];
+                if (keyMgmt && keyMgmt.deleteKey) {
+                    keyMgmt.deleteKey(keyId);
+                }
+            }
+        }
+
+        // 页面加载完成后启动运行时间计时器
+        document.addEventListener('DOMContentLoaded', updateUptime);
+    </script>
+</body>
+</html>

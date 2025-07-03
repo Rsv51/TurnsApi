@@ -1,0 +1,51 @@
+# TurnsAPI 配置文件示例
+# 复制此文件为 config.yaml 并修改相应配置
+
+server:
+  port: "8080"        # 服务端口
+  host: "0.0.0.0"     # 监听地址，0.0.0.0 表示监听所有网卡
+
+auth:
+  enabled: true                 # 是否启用认证（建议生产环境启用）
+  username: "admin"             # 管理员用户名
+  password: "turnsapi123"       # 管理员密码（请修改为强密码）
+  session_timeout: "24h"        # 会话超时时间
+  
+openrouter:
+  base_url: "https://openrouter.ai/api/v1"  # OpenRouter API 基础 URL
+  timeout: 30s                              # 请求超时时间
+  max_retries: 3                            # 最大重试次数
+  
+api_keys:
+  # 在这里配置您的 OpenRouter API 密钥
+  # 请将示例密钥替换为您的真实密钥
+  keys:
+    - "sk-or-v1-your-real-api-key-1"       # 替换为您的第一个API密钥
+    - "sk-or-v1-your-real-api-key-2"       # 替换为您的第二个API密钥
+    - "sk-or-v1-your-real-api-key-3"       # 替换为您的第三个API密钥
+    - "sk-or-v1-your-real-api-key-4"       # 替换为您的第四个API密钥
+    - "sk-or-v1-your-real-api-key-5"       # 替换为您的第五个API密钥
+    # 可以添加更多密钥...
+    
+  # 密钥轮询策略
+  # round_robin: 轮询使用（推荐）
+  # random: 随机选择
+  # least_used: 选择使用次数最少的密钥
+  rotation_strategy: "round_robin"
+  
+  # 健康检查间隔（自动重新启用失败的密钥）
+  health_check_interval: 60s
+  
+logging:
+  level: "info"                 # 日志级别: debug, info, warn, error
+  file: "logs/turnsapi.log"     # 日志文件路径
+  max_size: 100                 # 日志文件最大大小 (MB)
+  max_backups: 3                # 保留的日志文件数量
+  max_age: 28                   # 日志文件保留天数
+
+# 配置说明:
+# 1. 请确保将 api_keys.keys 中的示例密钥替换为您的真实 OpenRouter API 密钥
+# 2. 您可以配置 1-50 个 API 密钥，系统会自动进行负载均衡
+# 3. 如果某个密钥出现错误，系统会自动切换到其他可用密钥
+# 4. 建议使用 round_robin 轮询策略以获得最佳性能
+# 5. 可以根据需要调整超时时间和重试次数

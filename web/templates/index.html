@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl font-bold text-gray-800 mb-4">TurnsAPI</h1>
+            <p class="text-xl text-gray-600 mb-6">OpenRouter API 代理服务</p>
+            <div class="flex justify-center space-x-4">
+                <a href="/dashboard" class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200">
+                    查看仪表板
+                </a>
+                <a href="#api-docs" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200">
+                    API 文档
+                </a>
+            </div>
+        </div>
+
+        <!-- Features -->
+        <div class="grid md:grid-cols-3 gap-8 mb-12">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="text-blue-500 text-3xl mb-4">🔄</div>
+                <h3 class="text-xl font-semibold mb-2">智能轮询</h3>
+                <p class="text-gray-600">支持多种API密钥轮询策略，包括轮询、随机和最少使用算法</p>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="text-green-500 text-3xl mb-4">⚡</div>
+                <h3 class="text-xl font-semibold mb-2">流式支持</h3>
+                <p class="text-gray-600">完全支持流式和非流式响应，实时转发OpenRouter API响应</p>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="text-purple-500 text-3xl mb-4">📊</div>
+                <h3 class="text-xl font-semibold mb-2">实时监控</h3>
+                <p class="text-gray-600">实时监控API密钥状态、使用统计和错误信息</p>
+            </div>
+        </div>
+
+        <!-- API Documentation -->
+        <div id="api-docs" class="bg-white rounded-lg shadow-md p-8 mb-8">
+            <h2 class="text-2xl font-bold mb-6">API 使用说明</h2>
+            
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-3">端点地址</h3>
+                <div class="bg-gray-100 p-4 rounded-lg">
+                    <code class="text-sm">POST /api/v1/chat/completions</code>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-3">请求示例</h3>
+                <div class="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto">
+                    <pre><code>curl -X POST http://localhost:8080/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax/minimax-m1",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello, how are you?"
+      }
+    ],
+    "stream": false
+  }'</code></pre>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-3">流式请求示例</h3>
+                <div class="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto">
+                    <pre><code>curl -X POST http://localhost:8080/api/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "minimax/minimax-m1",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Tell me a story"
+      }
+    ],
+    "stream": true
+  }'</code></pre>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-3">支持的参数</h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full table-auto">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-4 py-2 text-left">参数</th>
+                                <th class="px-4 py-2 text-left">类型</th>
+                                <th class="px-4 py-2 text-left">必需</th>
+                                <th class="px-4 py-2 text-left">说明</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="border-t">
+                                <td class="px-4 py-2"><code>model</code></td>
+                                <td class="px-4 py-2">string</td>
+                                <td class="px-4 py-2">是</td>
+                                <td class="px-4 py-2">模型名称，如 minimax/minimax-m1</td>
+                            </tr>
+                            <tr class="border-t">
+                                <td class="px-4 py-2"><code>messages</code></td>
+                                <td class="px-4 py-2">array</td>
+                                <td class="px-4 py-2">是</td>
+                                <td class="px-4 py-2">对话消息数组</td>
+                            </tr>
+                            <tr class="border-t">
+                                <td class="px-4 py-2"><code>stream</code></td>
+                                <td class="px-4 py-2">boolean</td>
+                                <td class="px-4 py-2">否</td>
+                                <td class="px-4 py-2">是否启用流式响应</td>
+                            </tr>
+                            <tr class="border-t">
+                                <td class="px-4 py-2"><code>temperature</code></td>
+                                <td class="px-4 py-2">number</td>
+                                <td class="px-4 py-2">否</td>
+                                <td class="px-4 py-2">温度参数 (0-2)</td>
+                            </tr>
+                            <tr class="border-t">
+                                <td class="px-4 py-2"><code>max_tokens</code></td>
+                                <td class="px-4 py-2">integer</td>
+                                <td class="px-4 py-2">否</td>
+                                <td class="px-4 py-2">最大生成token数</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Check -->
+        <div class="bg-white rounded-lg shadow-md p-8" x-data="statusCheck()">
+            <h2 class="text-2xl font-bold mb-6">服务状态</h2>
+            <div class="flex items-center justify-between">
+                <div>
+                    <div class="flex items-center mb-2">
+                        <div class="w-3 h-3 rounded-full mr-2" :class="status.healthy ? 'bg-green-500' : 'bg-red-500'"></div>
+                        <span class="font-medium" x-text="status.healthy ? '服务正常' : '服务异常'"></span>
+                    </div>
+                    <p class="text-sm text-gray-600" x-text="'最后检查: ' + status.lastCheck"></p>
+                </div>
+                <button @click="checkStatus()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    刷新状态
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function statusCheck() {
+            return {
+                status: {
+                    healthy: true,
+                    lastCheck: new Date().toLocaleString()
+                },
+                async checkStatus() {
+                    try {
+                        const response = await fetch('/health');
+                        this.status.healthy = response.ok;
+                        this.status.lastCheck = new Date().toLocaleString();
+                    } catch (error) {
+                        this.status.healthy = false;
+                        this.status.lastCheck = new Date().toLocaleString();
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
