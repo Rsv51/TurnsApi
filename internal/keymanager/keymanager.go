@@ -15,6 +15,7 @@ import (
 // KeyStatus API密钥状态
 type KeyStatus struct {
 	Key           string    `json:"key"`
+	KeyID         string    `json:"key_id,omitempty"` // 原始密钥ID，用于删除和编辑
 	Name          string    `json:"name,omitempty"`
 	Description   string    `json:"description,omitempty"`
 	IsActive      bool      `json:"is_active"`
@@ -246,6 +247,7 @@ func (km *KeyManager) GetKeyStatuses() map[string]*KeyStatus {
 	for key, status := range km.keyStatuses {
 		statusCopy := *status
 		statusCopy.Key = km.maskKey(key) // 隐藏密钥的敏感部分
+		statusCopy.KeyID = key           // 保留原始密钥用于删除和编辑
 		statuses[km.maskKey(key)] = &statusCopy
 	}
 
@@ -448,6 +450,87 @@ func (km *KeyManager) UpdateKey(keyID, name, description string, isActive *bool,
 	}
 
 	return fmt.Errorf("API密钥不存在")
+}
+
+// UpdateKeyWithNewKey 更新API密钥，包括密钥本身
+func (km *KeyManager) UpdateKeyWithNewKey(oldKeyID, newKey, name, description string, isActive *bool, allowedModels []string) error {
+	km.mutex.Lock()
+	defer km.mutex.Unlock()
+
+	// 检查旧密钥是否存在
+	oldStatus, exists := km.keyStatuses[oldKeyID]
+	if !exists {
+		return fmt.Errorf("原API密钥不存在")
+	}
+
+	oldInfo, infoExists := km.keyInfos[oldKeyID]
+	if !infoExists {
+		return fmt.Errorf("原API密钥信息不存在")
+	}
+
+	// 如果新密钥与旧密钥相同，只更新其他信息
+	if newKey == oldKeyID {
+		return km.UpdateKey(oldKeyID, name, description, isActive, allowedModels)
+	}
+
+	// 检查新密钥是否已存在
+	if _, exists := km.keyStatuses[newKey]; exists {
+		return fmt.Errorf("新API密钥已存在")
+	}
+
+	// 从keys切片中找到并替换旧密钥
+	for i, key := range km.keys {
+		if key == oldKeyID {
+			km.keys[i] = newKey
+			break
+		}
+	}
+
+	// 创建新的密钥信息和状态
+	newInfo := &KeyInfo{
+		Key:           newKey,
+		Name:          name,
+		Description:   description,
+		IsActive:      oldInfo.IsActive,
+		AllowedModels: allowedModels,
+	}
+
+	newStatus := &KeyStatus{
+		Key:           newKey,
+		KeyID:         newKey,
+		Name:          name,
+		Description:   description,
+		IsActive:      oldStatus.IsActive,
+		LastUsed:      oldStatus.LastUsed,
+		UsageCount:    oldStatus.UsageCount,
+		ErrorCount:    oldStatus.ErrorCount,
+		LastError:     oldStatus.LastError,
+		LastErrorTime: oldStatus.LastErrorTime,
+		AllowedModels: allowedModels,
+	}
+
+	// 应用状态更新
+	if isActive != nil {
+		newInfo.IsActive = *isActive
+		newStatus.IsActive = *isActive
+	}
+
+	// 添加新密钥信息
+	km.keyInfos[newKey] = newInfo
+	km.keyStatuses[newKey] = newStatus
+
+	// 删除旧密钥信息
+	delete(km.keyInfos, oldKeyID)
+	delete(km.keyStatuses, oldKeyID)
+
+	log.Printf("API密钥已更新: %s -> %s (名称: %s)", km.maskKey(oldKeyID), km.maskKey(newKey), name)
+
+	// 更新配置文件
+	if err := km.updateConfigFile(); err != nil {
+		log.Printf("更新配置文件失败: %v", err)
+	}
+
+	return nil
 }
 
 // DeleteKey 删除API密钥

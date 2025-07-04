@@ -32,6 +32,9 @@ type Server struct {
 	modelsCacheData []byte
 	modelsCacheTime time.Time
 	modelsCacheTTL  time.Duration
+
+	// 服务器启动时间
+	startTime time.Time
 }
 
 // NewServer 创建新的HTTP服务器
@@ -50,6 +53,7 @@ func NewServer(config *internal.Config, keyManager *keymanager.KeyManager) *Serv
 		proxyKeyManager: proxykey.NewManager(),
 		router:          gin.New(),
 		modelsCacheTTL:  10 * time.Minute, // 模型列表缓存10分钟
+		startTime:       time.Now(),       // 记录服务器启动时间
 	}
 
 	// 创建代理
@@ -321,6 +325,7 @@ func (s *Server) handleAddKeysBatch(c *gin.Context) {
 func (s *Server) handleUpdateKey(c *gin.Context) {
 	keyID := c.Param("id")
 	var req struct {
+		Key           string   `json:"key"` // 新增：支持更新密钥本身
 		Name          string   `json:"name"`
 		Description   string   `json:"description"`
 		IsActive      *bool    `json:"is_active"`
@@ -335,13 +340,24 @@ func (s *Server) handleUpdateKey(c *gin.Context) {
 		return
 	}
 
-	// 更新密钥信息
-	if err := s.keyManager.UpdateKey(keyID, req.Name, req.Description, req.IsActive, req.AllowedModels); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-			"code":  "update_key_failed",
-		})
-		return
+	// 如果提供了新的密钥，使用UpdateKeyWithNewKey方法
+	if req.Key != "" && req.Key != keyID {
+		if err := s.keyManager.UpdateKeyWithNewKey(keyID, req.Key, req.Name, req.Description, req.IsActive, req.AllowedModels); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+				"code":  "update_key_failed",
+			})
+			return
+		}
+	} else {
+		// 否则只更新其他信息
+		if err := s.keyManager.UpdateKey(keyID, req.Name, req.Description, req.IsActive, req.AllowedModels); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+				"code":  "update_key_failed",
+			})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -444,13 +460,20 @@ func (s *Server) handleStatus(c *gin.Context) {
 		"timestamp":   time.Now(),
 		"active_keys": activeCount,
 		"total_keys":  totalCount,
-		"uptime":      time.Since(time.Now()), // 这里应该记录实际的启动时间
+		"uptime":      time.Since(s.startTime), // 使用实际的启动时间
 	})
 }
 
 // handleKeysStatus 处理密钥状态查询
 func (s *Server) handleKeysStatus(c *gin.Context) {
-	keyStatuses := s.keyManager.GetKeyStatuses()
+	keyStatusesMap := s.keyManager.GetKeyStatuses()
+
+	// 将map转换为数组
+	keyStatuses := make([]*keymanager.KeyStatus, 0, len(keyStatusesMap))
+	for _, status := range keyStatusesMap {
+		keyStatuses = append(keyStatuses, status)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"keys": keyStatuses,
 	})
