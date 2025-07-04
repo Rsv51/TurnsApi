@@ -1,6 +1,7 @@
 package api
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -560,8 +561,25 @@ func (s *Server) handleAvailableModels(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
+	// 检查响应是否使用gzip压缩并读取响应
+	var bodyReader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			log.Printf("Failed to create gzip reader: %v", err)
+			s.keyManager.ReportError(apiKey, err.Error())
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": "Failed to decompress response",
+				"code":  "response_decompress_failed",
+			})
+			return
+		}
+		defer gzipReader.Close()
+		bodyReader = gzipReader
+	}
+
 	// 读取响应
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(bodyReader)
 	if err != nil {
 		s.keyManager.ReportError(apiKey, err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{

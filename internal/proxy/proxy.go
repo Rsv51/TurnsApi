@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -187,8 +188,27 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 	}
 	defer resp.Body.Close()
 
+	// 检查响应是否使用gzip压缩并读取响应
+	var bodyReader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			log.Printf("Failed to create gzip reader: %v", err)
+			p.keyManager.ReportError(apiKey, err.Error())
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": gin.H{
+					"message": "Failed to decompress response",
+					"type":    "response_error",
+				},
+			})
+			return false
+		}
+		defer gzipReader.Close()
+		bodyReader = gzipReader
+	}
+
 	// 读取响应
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(bodyReader)
 	if err != nil {
 		log.Printf("Failed to read response: %v", err)
 		p.keyManager.ReportError(apiKey, err.Error())
@@ -299,8 +319,27 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
 
+	// 检查响应是否使用gzip压缩
+	var bodyReader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			log.Printf("Failed to create gzip reader: %v", err)
+			p.keyManager.ReportError(apiKey, err.Error())
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": gin.H{
+					"message": "Failed to decompress response",
+					"type":    "response_error",
+				},
+			})
+			return false
+		}
+		defer gzipReader.Close()
+		bodyReader = gzipReader
+	}
+
 	// 创建缓冲读取器
-	reader := bufio.NewReader(resp.Body)
+	reader := bufio.NewReader(bodyReader)
 
 	// 获取响应写入器
 	w := c.Writer
@@ -403,8 +442,28 @@ func (p *OpenRouterProxy) HandleModels(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
+	// 检查响应是否使用gzip压缩并读取响应
+	var bodyReader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzipReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			log.Printf("Failed to create gzip reader: %v", err)
+			p.keyManager.ReportError(apiKey, err.Error())
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": gin.H{
+					"message": "Failed to decompress response",
+					"type":    "response_error",
+					"code":    "response_decompress_failed",
+				},
+			})
+			return
+		}
+		defer gzipReader.Close()
+		bodyReader = gzipReader
+	}
+
 	// 读取响应
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(bodyReader)
 	if err != nil {
 		p.keyManager.ReportError(apiKey, err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{
