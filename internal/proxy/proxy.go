@@ -14,6 +14,7 @@ import (
 
 	"turnsapi/internal"
 	"turnsapi/internal/keymanager"
+	"turnsapi/internal/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,20 +39,41 @@ type ChatMessage struct {
 
 // OpenRouterProxy OpenRouter代理
 type OpenRouterProxy struct {
-	config     *internal.Config
-	keyManager *keymanager.KeyManager
-	httpClient *http.Client
+	config        *internal.Config
+	keyManager    *keymanager.KeyManager
+	httpClient    *http.Client
+	requestLogger *logger.RequestLogger
 }
 
 // NewOpenRouterProxy 创建新的OpenRouter代理
-func NewOpenRouterProxy(config *internal.Config, keyManager *keymanager.KeyManager) *OpenRouterProxy {
+func NewOpenRouterProxy(config *internal.Config, keyManager *keymanager.KeyManager, requestLogger *logger.RequestLogger) *OpenRouterProxy {
 	return &OpenRouterProxy{
-		config:     config,
-		keyManager: keyManager,
+		config:        config,
+		keyManager:    keyManager,
+		requestLogger: requestLogger,
 		httpClient: &http.Client{
 			Timeout: config.OpenRouter.Timeout,
 		},
 	}
+}
+
+// getProxyKeyInfo 从上下文中获取代理密钥信息
+func (p *OpenRouterProxy) getProxyKeyInfo(c *gin.Context) (string, string) {
+	proxyKeyName, exists1 := c.Get("proxy_key_name")
+	proxyKeyID, exists2 := c.Get("proxy_key_id")
+	
+	if !exists1 || !exists2 {
+		return "Unknown", "unknown"
+	}
+	
+	name, ok1 := proxyKeyName.(string)
+	id, ok2 := proxyKeyID.(string)
+	
+	if !ok1 || !ok2 {
+		return "Unknown", "unknown"
+	}
+	
+	return name, id
 }
 
 // HandleChatCompletions 处理聊天完成请求
@@ -132,10 +154,17 @@ func (p *OpenRouterProxy) handleStreamingRequestWithRetry(c *gin.Context, req *C
 
 // handleNonStreamingRequest 处理非流式请求
 func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCompletionRequest, apiKey string) bool {
+	startTime := time.Now()
+	
 	// 序列化请求
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		log.Printf("Failed to marshal request: %v", err)
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, false, time.Since(startTime), err)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"message": "Internal server error",
@@ -150,6 +179,11 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
 	if err != nil {
 		log.Printf("Failed to create request: %v", err)
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, false, time.Since(startTime), err)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"message": "Internal server error",
@@ -178,6 +212,11 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 	if err != nil {
 		log.Printf("Request failed: %v", err)
 		p.keyManager.ReportError(apiKey, err.Error())
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
+		}
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"message": "Failed to connect to OpenRouter API",
@@ -195,6 +234,11 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 		if err != nil {
 			log.Printf("Failed to create gzip reader: %v", err)
 			p.keyManager.ReportError(apiKey, err.Error())
+			// 记录日志
+			if p.requestLogger != nil {
+				proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+				p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
+			}
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": gin.H{
 					"message": "Failed to decompress response",
@@ -212,6 +256,11 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 	if err != nil {
 		log.Printf("Failed to read response: %v", err)
 		p.keyManager.ReportError(apiKey, err.Error())
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
+		}
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"message": "Failed to read response from OpenRouter API",
@@ -221,10 +270,19 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 		return false
 	}
 
+	duration := time.Since(startTime)
+
 	// 检查响应状态
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("OpenRouter API returned status %d: %s", resp.StatusCode, string(respBody))
 		p.keyManager.ReportError(apiKey, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody)))
+		
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			requestErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, false, duration, requestErr)
+		}
 
 		// 转发错误响应
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
@@ -234,6 +292,12 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 	// 报告成功
 	p.keyManager.ReportSuccess(apiKey)
 
+	// 记录成功日志
+	if p.requestLogger != nil {
+		proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, false, duration, nil)
+	}
+
 	// 转发成功响应
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 	return true
@@ -241,10 +305,17 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 
 // handleStreamingRequest 处理流式请求
 func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatCompletionRequest, apiKey string) bool {
+	startTime := time.Now()
+	
 	// 序列化请求
 	reqBody, err := json.Marshal(req)
 	if err != nil {
 		log.Printf("Failed to marshal request: %v", err)
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), err)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"message": "Internal server error",
@@ -259,6 +330,11 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(reqBody))
 	if err != nil {
 		log.Printf("Failed to create request: %v", err)
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), err)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"message": "Internal server error",
@@ -293,6 +369,11 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 	if err != nil {
 		log.Printf("Streaming request failed: %v", err)
 		p.keyManager.ReportError(apiKey, err.Error())
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, true, time.Since(startTime), err)
+		}
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"message": "Failed to connect to OpenRouter API",
@@ -308,6 +389,13 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("OpenRouter API returned status %d: %s", resp.StatusCode, string(respBody))
 		p.keyManager.ReportError(apiKey, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody)))
+		
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			requestErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, true, time.Since(startTime), requestErr)
+		}
 
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 		return false
@@ -326,6 +414,11 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		if err != nil {
 			log.Printf("Failed to create gzip reader: %v", err)
 			p.keyManager.ReportError(apiKey, err.Error())
+			// 记录日志
+			if p.requestLogger != nil {
+				proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+				p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, true, time.Since(startTime), err)
+			}
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": gin.H{
 					"message": "Failed to decompress response",
@@ -346,6 +439,12 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		log.Printf("Streaming not supported")
+		// 记录日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			streamErr := fmt.Errorf("streaming not supported")
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), streamErr)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"message": "Streaming not supported",
@@ -357,6 +456,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 
 	// 流式转发响应
 	hasData := false
+	var responseBuffer strings.Builder
+	
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -367,6 +468,11 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 			if !hasData {
 				// 只有在没有接收到任何数据时才报告错误
 				p.keyManager.ReportError(apiKey, err.Error())
+				// 记录日志
+				if p.requestLogger != nil {
+					proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+					p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), responseBuffer.String(), 502, true, time.Since(startTime), err)
+				}
 				return false
 			}
 			// 如果已经接收到数据，即使后续出现错误也认为是成功的
@@ -380,17 +486,34 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		if strings.HasPrefix(line, "data: ") || strings.HasPrefix(line, "event: ") || line == "\n" {
 			w.Write([]byte(line))
 			flusher.Flush()
+			// 收集响应数据用于日志记录（限制大小以避免内存问题）
+			if responseBuffer.Len() < 10000 { // 限制为10KB
+				responseBuffer.WriteString(line)
+			}
 		}
 	}
+
+	duration := time.Since(startTime)
 
 	// 如果接收到数据，报告成功
 	if hasData {
 		p.keyManager.ReportSuccess(apiKey)
+		// 记录成功日志
+		if p.requestLogger != nil {
+			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), responseBuffer.String(), 200, true, duration, nil)
+		}
 		return true
 	}
 
 	// 没有接收到任何数据，报告错误
 	p.keyManager.ReportError(apiKey, "No data received from stream")
+	// 记录日志
+	if p.requestLogger != nil {
+		proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+		streamErr := fmt.Errorf("no data received from stream")
+		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, true, duration, streamErr)
+	}
 	return false
 }
 

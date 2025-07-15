@@ -41,6 +41,11 @@ type Config struct {
 		MaxBackups int    `yaml:"max_backups"`
 		MaxAge     int    `yaml:"max_age"`
 	} `yaml:"logging"`
+
+	Database struct {
+		Path           string `yaml:"path"`
+		RetentionDays  int    `yaml:"retention_days"`
+	} `yaml:"database"`
 }
 
 // LoadConfig 从文件加载配置
@@ -91,6 +96,12 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 	if config.Auth.SessionTimeout == 0 {
 		config.Auth.SessionTimeout = 24 * time.Hour
+	}
+	if config.Database.Path == "" {
+		config.Database.Path = "data/turnsapi.db"
+	}
+	if config.Database.RetentionDays == 0 {
+		config.Database.RetentionDays = 30
 	}
 
 	return config, nil

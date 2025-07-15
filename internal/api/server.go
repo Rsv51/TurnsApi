@@ -7,11 +7,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"turnsapi/internal"
 	"turnsapi/internal/auth"
 	"turnsapi/internal/keymanager"
+	"turnsapi/internal/logger"
 	"turnsapi/internal/proxy"
 	"turnsapi/internal/proxykey"
 
@@ -25,6 +27,7 @@ type Server struct {
 	proxy           *proxy.OpenRouterProxy
 	authManager     *auth.AuthManager
 	proxyKeyManager *proxykey.Manager
+	requestLogger   *logger.RequestLogger
 	router          *gin.Engine
 	httpServer      *http.Server
 
@@ -46,18 +49,35 @@ func NewServer(config *internal.Config, keyManager *keymanager.KeyManager) *Serv
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	// 创建请求日志记录器
+	requestLogger, err := logger.NewRequestLogger(config.Database.Path)
+	if err != nil {
+		log.Printf("Failed to create request logger: %v", err)
+		// 继续运行，但不记录请求日志
+		requestLogger = nil
+	}
+
+	// 创建带数据库支持的代理密钥管理器
+	var proxyKeyManager *proxykey.Manager
+	if requestLogger != nil {
+		proxyKeyManager = proxykey.NewManagerWithDB(requestLogger)
+	} else {
+		proxyKeyManager = proxykey.NewManager()
+	}
+
 	server := &Server{
 		config:          config,
 		keyManager:      keyManager,
 		authManager:     auth.NewAuthManager(config),
-		proxyKeyManager: proxykey.NewManager(),
+		proxyKeyManager: proxyKeyManager,
+		requestLogger:   requestLogger,
 		router:          gin.New(),
 		modelsCacheTTL:  10 * time.Minute, // 模型列表缓存10分钟
 		startTime:       time.Now(),       // 记录服务器启动时间
 	}
 
 	// 创建代理
-	server.proxy = proxy.NewOpenRouterProxy(config, keyManager)
+	server.proxy = proxy.NewOpenRouterProxy(config, keyManager, requestLogger)
 
 	// 设置代理密钥管理器到认证管理器
 	server.authManager.SetProxyKeyManager(server.proxyKeyManager)
@@ -143,6 +163,11 @@ func (s *Server) setupRoutes() {
 		admin.DELETE("/proxy-keys/:id", s.handleDeleteProxyKey)
 		// 获取完整模型列表（用于管理界面）
 		admin.GET("/available-models", s.handleAvailableModels)
+		// 请求日志管理
+		admin.GET("/logs", s.handleRequestLogs)
+		admin.GET("/logs/:id", s.handleRequestLogDetail)
+		admin.GET("/logs/stats/api-keys", s.handleAPIKeyStats)
+		admin.GET("/logs/stats/models", s.handleModelStats)
 	}
 
 	// 静态文件
@@ -152,6 +177,7 @@ func (s *Server) setupRoutes() {
 	// Web界面（需要Web认证）
 	s.router.GET("/", s.authManager.WebAuthMiddleware(), s.handleIndex)
 	s.router.GET("/dashboard", s.authManager.WebAuthMiddleware(), s.handleDashboard)
+	s.router.GET("/logs", s.authManager.WebAuthMiddleware(), s.handleLogsPage)
 
 	// 健康检查（不需要认证）
 	s.router.GET("/health", s.handleHealth)
@@ -533,6 +559,13 @@ func (s *Server) Start() error {
 
 // Stop 停止服务器
 func (s *Server) Stop(ctx context.Context) error {
+	// 关闭请求日志记录器
+	if s.requestLogger != nil {
+		if err := s.requestLogger.Close(); err != nil {
+			log.Printf("Failed to close request logger: %v", err)
+		}
+	}
+
 	if s.httpServer != nil {
 		return s.httpServer.Shutdown(ctx)
 	}
@@ -628,4 +661,154 @@ func (s *Server) handleAvailableModels(c *gin.Context) {
 
 	// 返回完整的模型列表（不过滤）
 	c.Data(http.StatusOK, "application/json", body)
+}
+
+// handleRequestLogs 获取请求日志列表
+func (s *Server) handleRequestLogs(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Request logging is not available",
+			"code":  "logging_unavailable",
+		})
+		return
+	}
+
+	// 解析查询参数
+	proxyKeyName := c.Query("proxy_key_name")
+	limitStr := c.DefaultQuery("limit", "50")
+	offsetStr := c.DefaultQuery("offset", "0")
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 || limit > 1000 {
+		limit = 50
+	}
+
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	// 获取日志列表
+	logs, err := s.requestLogger.GetRequestLogs(proxyKeyName, limit, offset)
+	if err != nil {
+		log.Printf("Failed to get request logs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get request logs",
+			"code":  "get_logs_failed",
+		})
+		return
+	}
+
+	// 获取总数
+	totalCount, err := s.requestLogger.GetRequestCount(proxyKeyName)
+	if err != nil {
+		log.Printf("Failed to get request count: %v", err)
+		totalCount = 0
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"logs":        logs,
+		"total_count": totalCount,
+		"limit":       limit,
+		"offset":      offset,
+	})
+}
+
+// handleRequestLogDetail 获取请求日志详情
+func (s *Server) handleRequestLogDetail(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Request logging is not available",
+			"code":  "logging_unavailable",
+		})
+		return
+	}
+
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid log ID",
+			"code":  "invalid_log_id",
+		})
+		return
+	}
+
+	// 获取日志详情
+	logDetail, err := s.requestLogger.GetRequestLogDetail(id)
+	if err != nil {
+		log.Printf("Failed to get request log detail: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Request log not found",
+			"code":  "log_not_found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"log":     logDetail,
+	})
+}
+
+// handleAPIKeyStats 获取代理密钥统计
+func (s *Server) handleAPIKeyStats(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Request logging is not available",
+			"code":  "logging_unavailable",
+		})
+		return
+	}
+
+	// 获取代理密钥统计
+	stats, err := s.requestLogger.GetProxyKeyStats()
+	if err != nil {
+		log.Printf("Failed to get proxy key stats: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get proxy key stats",
+			"code":  "get_stats_failed",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"stats":   stats,
+	})
+}
+
+// handleModelStats 获取模型统计
+func (s *Server) handleModelStats(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Request logging is not available",
+			"code":  "logging_unavailable",
+		})
+		return
+	}
+
+	// 获取模型统计
+	stats, err := s.requestLogger.GetModelStats()
+	if err != nil {
+		log.Printf("Failed to get model stats: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get model stats",
+			"code":  "get_stats_failed",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"stats":   stats,
+	})
+}
+
+// handleLogsPage 处理日志页面
+func (s *Server) handleLogsPage(c *gin.Context) {
+	c.HTML(http.StatusOK, "logs.html", gin.H{
+		"title": "请求日志 - TurnsAPI",
+	})
 }

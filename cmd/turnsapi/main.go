@@ -12,6 +12,7 @@ import (
 	"turnsapi/internal"
 	"turnsapi/internal/api"
 	"turnsapi/internal/keymanager"
+	"turnsapi/internal/logger"
 )
 
 var (
@@ -67,6 +68,9 @@ func main() {
 
 	log.Printf("密钥管理器初始化完成，轮询策略: %s", config.APIKeys.RotationStrategy)
 
+	// 启动日志清理任务
+	go startLogCleanupTask(config)
+
 	// 创建HTTP服务器
 	server := api.NewServer(config, keyManager)
 
@@ -93,5 +97,42 @@ func main() {
 		log.Printf("服务器关闭失败: %v", err)
 	} else {
 		log.Println("服务器已优雅关闭")
+	}
+}
+
+// startLogCleanupTask 启动日志清理任务
+func startLogCleanupTask(config *internal.Config) {
+	// 每天凌晨2点执行清理任务
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	// 立即执行一次清理（如果需要）
+	performLogCleanup(config)
+
+	for {
+		select {
+		case <-ticker.C:
+			performLogCleanup(config)
+		}
+	}
+}
+
+// performLogCleanup 执行日志清理
+func performLogCleanup(config *internal.Config) {
+	if config.Database.RetentionDays <= 0 {
+		return // 如果保留天数为0或负数，不执行清理
+	}
+
+	requestLogger, err := logger.NewRequestLogger(config.Database.Path)
+	if err != nil {
+		log.Printf("Failed to create request logger for cleanup: %v", err)
+		return
+	}
+	defer requestLogger.Close()
+
+	if err := requestLogger.CleanupOldLogs(config.Database.RetentionDays); err != nil {
+		log.Printf("Failed to cleanup old logs: %v", err)
+	} else {
+		log.Printf("Log cleanup completed successfully")
 	}
 }

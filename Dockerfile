@@ -17,14 +17,17 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
-# 构建应用
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o turnsapi ./cmd/turnsapi
+# 安装 SQLite 支持
+RUN apk add --no-cache gcc musl-dev sqlite-dev
+
+# 构建应用 (启用 CGO 以支持 SQLite)
+RUN CGO_ENABLED=1 GOOS=linux go build -a -o turnsapi ./cmd/turnsapi
 
 # 第二阶段：运行阶段
 FROM alpine:latest
 
 # 安装必要的运行时依赖
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata sqlite
 
 # 设置时区
 ENV TZ=Asia/Shanghai
@@ -40,7 +43,7 @@ WORKDIR /app
 COPY --from=builder /app/turnsapi .
 
 # 创建必要的目录
-RUN mkdir -p config logs web/static web/templates && \
+RUN mkdir -p config logs data web/static web/templates && \
     chown -R turnsapi:turnsapi /app
 
 # 复制配置文件和静态资源

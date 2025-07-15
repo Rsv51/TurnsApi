@@ -8,6 +8,8 @@ TurnsAPI 是一个用 Go 语言开发的高性能 API 代理服务，专门用�
 - **流式响应支持**: 完全支持 Server-Sent Events (SSE) 流式响应
 - **高可用性**: 自动故障转移和重试机制
 - **实时监控**: Web 界面实时监控 API 密钥状态和服务性能
+- **请求日志记录**: 完整记录所有API请求和响应信息，支持按密钥分类存储
+- **日志分析**: 提供详细的统计分析，包括API密钥使用情况和模型调用统计
 - **安全认证**: 内置用户名密码认证系统，保护 API 和管理界面
 - **错误处理**: 智能错误处理和 API 密钥健康检查
 - **易于配置**: 基于 YAML 的配置文件
@@ -48,8 +50,12 @@ api_keys:
 ### 4. 构建和运行
 
 ```bash
-# 构建
-go build -o turnsapi cmd/turnsapi/main.go
+# 快速构建和测试
+chmod +x build_and_test.sh
+./build_and_test.sh
+
+# 或者手动构建
+CGO_ENABLED=1 go build -o turnsapi cmd/turnsapi/main.go
 
 # 运行
 ./turnsapi -config config/config.yaml
@@ -60,6 +66,10 @@ go build -o turnsapi cmd/turnsapi/main.go
 ```bash
 go run cmd/turnsapi/main.go -config config/config.yaml
 ```
+
+### 5. 验证安装
+
+访问 http://localhost:8080 确认服务正常运行，然后访问 http://localhost:8080/logs 查看日志记录功能。
 
 ## 🔧 配置说明
 
@@ -110,6 +120,14 @@ logging:
   max_size: 100           # 日志文件最大大小 (MB)
   max_backups: 3          # 保留的日志文件数量
   max_age: 28             # 日志文件保留天数
+```
+
+### 数据库配置
+
+```yaml
+database:
+  path: "data/turnsapi.db"    # SQLite数据库文件路径
+  retention_days: 30          # 请求日志保留天数
 ```
 
 ## 📡 API 使用
@@ -196,6 +214,7 @@ curl -X POST http://localhost:8080/api/v1/chat/completions \
 - **登录页面**: http://localhost:8080/auth/login
 - **首页**: http://localhost:8080/ （需要登录）
 - **仪表板**: http://localhost:8080/dashboard （需要登录）
+- **请求日志**: http://localhost:8080/logs （需要登录）
 - **API 状态**: http://localhost:8080/admin/status （需要认证）
 - **密钥状态**: http://localhost:8080/admin/keys （需要认证）
 
@@ -204,6 +223,8 @@ curl -X POST http://localhost:8080/api/v1/chat/completions \
 - 实时显示 API 密钥状态
 - 服务性能监控
 - 使用统计和错误统计
+- **请求日志查看**: 详细的API请求和响应日志记录
+- **统计分析**: API密钥使用统计和模型调用分析
 - 自动刷新功能
 
 ## 🔍 监控和管理
@@ -224,6 +245,28 @@ curl http://localhost:8080/admin/status
 
 ```bash
 curl http://localhost:8080/admin/keys
+```
+
+### 请求日志查询
+
+```bash
+# 获取所有请求日志
+curl http://localhost:8080/admin/logs
+
+# 按API密钥筛选日志
+curl "http://localhost:8080/admin/logs?api_key=sk-or****1234"
+
+# 分页查询日志
+curl "http://localhost:8080/admin/logs?limit=20&offset=0"
+
+# 获取日志详情
+curl http://localhost:8080/admin/logs/123
+
+# 获取API密钥统计
+curl http://localhost:8080/admin/logs/stats/api-keys
+
+# 获取模型使用统计
+curl http://localhost:8080/admin/logs/stats/models
 ```
 
 ## 🚨 故障排除

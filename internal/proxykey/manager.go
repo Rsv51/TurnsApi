@@ -4,8 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"sync"
 	"time"
+
+	"turnsapi/internal/logger"
 )
 
 // ProxyKey 代理服务API密钥
@@ -22,8 +25,9 @@ type ProxyKey struct {
 
 // Manager 代理密钥管理器
 type Manager struct {
-	keys map[string]*ProxyKey
-	mu   sync.RWMutex
+	keys          map[string]*ProxyKey
+	requestLogger *logger.RequestLogger
+	mu            sync.RWMutex
 }
 
 // NewManager 创建新的代理密钥管理器
@@ -31,6 +35,57 @@ func NewManager() *Manager {
 	return &Manager{
 		keys: make(map[string]*ProxyKey),
 	}
+}
+
+// NewManagerWithDB 创建带数据库支持的代理密钥管理器
+func NewManagerWithDB(requestLogger *logger.RequestLogger) *Manager {
+	m := &Manager{
+		keys:          make(map[string]*ProxyKey),
+		requestLogger: requestLogger,
+	}
+	
+	// 从数据库加载现有密钥
+	if err := m.loadKeysFromDB(); err != nil {
+		log.Printf("Failed to load proxy keys from database: %v", err)
+	}
+	
+	return m
+}
+
+// loadKeysFromDB 从数据库加载代理密钥
+func (m *Manager) loadKeysFromDB() error {
+	if m.requestLogger == nil {
+		return nil
+	}
+	
+	dbKeys, err := m.requestLogger.GetAllProxyKeys()
+	if err != nil {
+		return fmt.Errorf("failed to get proxy keys from database: %w", err)
+	}
+	
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	for _, dbKey := range dbKeys {
+		// 转换数据库模型到内存模型
+		key := &ProxyKey{
+			ID:          dbKey.ID,
+			Key:         dbKey.Key,
+			Name:        dbKey.Name,
+			Description: dbKey.Description,
+			CreatedAt:   dbKey.CreatedAt,
+			IsActive:    dbKey.IsActive,
+		}
+		
+		if dbKey.LastUsedAt != nil {
+			key.LastUsed = *dbKey.LastUsedAt
+		}
+		
+		m.keys[key.ID] = key
+	}
+	
+	log.Printf("Loaded %d proxy keys from database", len(dbKeys))
+	return nil
 }
 
 // GenerateKey 生成新的代理API密钥
@@ -46,14 +101,32 @@ func (m *Manager) GenerateKey(name, description string) (*ProxyKey, error) {
 
 	keyStr := "tapi-" + hex.EncodeToString(keyBytes)
 	id := generateID()
+	now := time.Now()
 
 	key := &ProxyKey{
 		ID:          id,
 		Key:         keyStr,
 		Name:        name,
 		Description: description,
-		CreatedAt:   time.Now(),
+		CreatedAt:   now,
 		IsActive:    true,
+	}
+
+	// 保存到数据库
+	if m.requestLogger != nil {
+		dbKey := &logger.ProxyKey{
+			ID:          id,
+			Name:        name,
+			Description: description,
+			Key:         keyStr,
+			IsActive:    true,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		
+		if err := m.requestLogger.InsertProxyKey(dbKey); err != nil {
+			return nil, fmt.Errorf("failed to save proxy key to database: %w", err)
+		}
 	}
 
 	m.keys[id] = key
@@ -67,7 +140,20 @@ func (m *Manager) ValidateKey(keyStr string) (interface{}, bool) {
 
 	for _, key := range m.keys {
 		if key.Key == keyStr && key.IsActive {
-			return key, true
+			// 返回logger.ProxyKey类型以便认证中间件使用
+			dbKey := &logger.ProxyKey{
+				ID:          key.ID,
+				Name:        key.Name,
+				Description: key.Description,
+				Key:         key.Key,
+				IsActive:    key.IsActive,
+				CreatedAt:   key.CreatedAt,
+				UpdatedAt:   key.CreatedAt,
+			}
+			if !key.LastUsed.IsZero() {
+				dbKey.LastUsedAt = &key.LastUsed
+			}
+			return dbKey, true
 		}
 	}
 	return nil, false
@@ -82,6 +168,13 @@ func (m *Manager) UpdateUsage(keyStr string) {
 		if key.Key == keyStr {
 			key.LastUsed = time.Now()
 			key.UsageCount++
+			
+			// 更新数据库中的最后使用时间
+			if m.requestLogger != nil {
+				if err := m.requestLogger.UpdateProxyKeyLastUsed(key.ID); err != nil {
+					log.Printf("Failed to update proxy key last used time in database: %v", err)
+				}
+			}
 			break
 		}
 	}
@@ -106,6 +199,13 @@ func (m *Manager) DeleteKey(id string) error {
 
 	if _, exists := m.keys[id]; !exists {
 		return fmt.Errorf("key not found")
+	}
+
+	// 从数据库删除
+	if m.requestLogger != nil {
+		if err := m.requestLogger.DeleteProxyKey(id); err != nil {
+			return fmt.Errorf("failed to delete proxy key from database: %w", err)
+		}
 	}
 
 	delete(m.keys, id)

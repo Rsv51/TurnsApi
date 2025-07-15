@@ -14,6 +14,8 @@ services:
       - ./config/config.yaml:/app/config/config.yaml
       # 挂载日志目录
       - ./logs:/app/logs
+      # 挂载数据库目录
+      - ./data:/app/data
       # 可选：挂载静态文件目录（如果需要自定义）
       - ./web:/app/web:ro
     environment:

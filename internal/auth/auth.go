@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"turnsapi/internal"
+	"turnsapi/internal/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -330,6 +331,16 @@ func (am *AuthManager) APIKeyAuthMiddleware() gin.HandlerFunc {
 		// 将密钥信息存储到上下文中
 		c.Set("api_key", apiKey)
 		c.Set("key_info", keyInfo)
+		
+		// 如果keyInfo是ProxyKey类型，提取名称和ID
+		if proxyKey, ok := keyInfo.(*logger.ProxyKey); ok {
+			c.Set("proxy_key_name", proxyKey.Name)
+			c.Set("proxy_key_id", proxyKey.ID)
+		} else {
+			// 兼容旧的代理密钥管理器
+			c.Set("proxy_key_name", "Unknown")
+			c.Set("proxy_key_id", "unknown")
+		}
 
 		c.Next()
 	}
