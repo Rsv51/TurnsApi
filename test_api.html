@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API测试</title>
+</head>
+<body>
+    <h1>TurnsAPI 日志API测试</h1>
+    <div id="results"></div>
+
+    <script>
+        async function testAPI() {
+            const results = document.getElementById('results');
+            
+            try {
+                // 测试日志API
+                console.log('测试日志API...');
+                const response = await fetch('/admin/logs');
+                console.log('响应状态:', response.status);
+                
+                if (response.status === 401) {
+                    results.innerHTML += '<p style="color: red;">❌ 认证失败 - 需要登录</p>';
+                    return;
+                }
+                
+                const data = await response.json();
+                console.log('响应数据:', data);
+                
+                results.innerHTML += `<h2>日志API响应:</h2>`;
+                results.innerHTML += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+                
+                if (data.success) {
+                    results.innerHTML += `<p style="color: green;">✅ API调用成功</p>`;
+                    results.innerHTML += `<p>日志数量: ${data.logs ? data.logs.length : 0}</p>`;
+                    results.innerHTML += `<p>总数: ${data.total_count || 0}</p>`;
+                } else {
+                    results.innerHTML += `<p style="color: red;">❌ API调用失败: ${data.error}</p>`;
+                }
+                
+                // 测试统计API
+                console.log('测试统计API...');
+                const statsResponse = await fetch('/admin/logs/stats/api-keys');
+                const statsData = await statsResponse.json();
+                console.log('统计数据:', statsData);
+                
+                results.innerHTML += `<h2>统计API响应:</h2>`;
+                results.innerHTML += `<pre>${JSON.stringify(statsData, null, 2)}</pre>`;
+                
+            } catch (error) {
+                console.error('测试失败:', error);
+                results.innerHTML += `<p style="color: red;">❌ 测试失败: ${error.message}</p>`;
+            }
+        }
+        
+        // 页面加载后自动测试
+        window.onload = testAPI;
+    </script>
+</body>
+</html>

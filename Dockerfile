@@ -5,8 +5,8 @@ FROM golang:1.21-alpine AS builder
 # 设置工作目录
 WORKDIR /app
 
-# 安装必要的工具
-RUN apk add --no-cache git ca-certificates tzdata
+# 安装必要的工具和SQLite开发库
+RUN apk add --no-cache git ca-certificates tzdata gcc musl-dev sqlite-dev
 
 # 复制 go mod 文件
 COPY go.mod go.sum ./
@@ -17,17 +17,19 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
-# 安装 SQLite 支持
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+# 设置编译环境变量
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
 
 # 构建应用 (启用 CGO 以支持 SQLite)
-RUN CGO_ENABLED=1 GOOS=linux go build -a -o turnsapi ./cmd/turnsapi
+RUN go build -a -ldflags '-extldflags "-static"' -o turnsapi ./cmd/turnsapi
 
 # 第二阶段：运行阶段
 FROM alpine:latest
 
 # 安装必要的运行时依赖
-RUN apk --no-cache add ca-certificates tzdata sqlite
+RUN apk --no-cache add ca-certificates tzdata sqlite-dev
 
 # 设置时区
 ENV TZ=Asia/Shanghai

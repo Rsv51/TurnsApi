@@ -49,6 +49,32 @@ api_keys:
 
 ### 4. 构建和运行
 
+#### 方式一：Docker 运行（推荐）
+
+```bash
+# 1. 创建必要的目录
+mkdir -p config logs data
+
+# 2. 创建配置文件
+cp config/config.example.yaml config/config.yaml
+# 编辑 config/config.yaml，添加您的 OpenRouter API 密钥
+
+# 3. 使用 Docker 运行
+docker run -d \
+  --name turnsapi \
+  -p 8080:8080 \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  bradleylzh/turnsapi:latest
+
+# 4. 查看运行状态
+docker ps
+docker logs turnsapi
+```
+
+#### 方式二：本地构建运行
+
 ```bash
 # 快速构建和测试
 chmod +x build_and_test.sh
@@ -269,6 +295,104 @@ curl http://localhost:8080/admin/logs/stats/api-keys
 curl http://localhost:8080/admin/logs/stats/models
 ```
 
+## � Docker 使用说明
+
+### Docker 命令详解
+
+```bash
+# 基本运行命令
+docker run -d \
+  --name turnsapi \                    # 容器名称
+  -p 8080:8080 \                      # 端口映射 (主机:容器)
+  -v $(pwd)/config:/app/config \      # 配置文件挂载
+  -v $(pwd)/logs:/app/logs \          # 日志目录挂载
+  -v $(pwd)/data:/app/data \          # 数据库目录挂载
+  bradleylzh/turnsapi:latest          # 镜像地址
+
+# 查看容器状态
+docker ps
+
+# 查看容器日志
+docker logs turnsapi
+
+# 实时查看日志
+docker logs -f turnsapi
+
+# 停止容器
+docker stop turnsapi
+
+# 重启容器
+docker restart turnsapi
+
+# 删除容器
+docker rm turnsapi
+
+# 更新到最新版本
+docker pull bradleylzh/turnsapi:latest
+docker stop turnsapi
+docker rm turnsapi
+# 然后重新运行上面的 docker run 命令
+```
+
+### Docker Compose 部署
+
+创建 `docker-compose.yml` 文件：
+
+```yaml
+version: '3.8'
+
+services:
+  turnsapi:
+    image: bradleylzh/turnsapi:latest
+    container_name: turnsapi
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+使用 Docker Compose：
+
+```bash
+# 启动服务
+docker-compose up -d
+
+# 查看状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
+```
+
+### 数据持久化
+
+Docker 运行时会自动创建以下目录映射：
+
+- `./config` → `/app/config` (配置文件)
+- `./logs` → `/app/logs` (应用日志)
+- `./data` → `/app/data` (SQLite数据库)
+
+确保这些目录存在并有适当的权限：
+
+```bash
+mkdir -p config logs data
+chmod 755 config logs data
+```
+
 ## 🚨 故障排除
 
 ### 常见问题
@@ -278,14 +402,25 @@ curl http://localhost:8080/admin/logs/stats/models
    - 确保端口未被占用
    - 验证 API 密钥格式
 
-2. **API 请求失败**
+2. **Docker 相关问题**
+   - 确保 Docker 已正确安装并运行
+   - 检查端口 8080 是否被占用：`netstat -tlnp | grep 8080`
+   - 验证目录挂载权限：`ls -la config logs data`
+   - 查看容器日志：`docker logs turnsapi`
+
+3. **API 请求失败**
    - 检查 API 密钥是否有效
    - 确认网络连接正常
    - 查看日志文件获取详细错误信息
 
-3. **流式响应异常**
+4. **流式响应异常**
    - 确保客户端支持 Server-Sent Events
    - 检查防火墙和代理设置
+
+5. **数据库问题**
+   - 确保 `data` 目录有写入权限
+   - 检查 SQLite 数据库文件是否正常创建
+   - 查看应用日志中的数据库相关错误
 
 ### 日志查看
 
