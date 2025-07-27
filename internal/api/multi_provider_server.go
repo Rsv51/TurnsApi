@@ -1070,7 +1070,7 @@ func (s *MultiProviderServer) handleKeysStatus(c *gin.Context) {
 			providerConfig := &providers.ProviderConfig{
 				BaseURL:      group.BaseURL,
 				APIKey:       apiKey,
-				Timeout:      time.Duration(5) * time.Second, // 更短的超时用于状态检查
+				Timeout:      10 * time.Minute, // 使用10分钟超时
 				MaxRetries:   1,
 				Headers:      group.Headers,
 				ProviderType: group.ProviderType,
@@ -2131,7 +2131,7 @@ func (s *MultiProviderServer) handleValidateKeysWithoutGroup(c *gin.Context) {
 		ProviderType:     req.ProviderType,
 		BaseURL:          req.BaseURL,
 		Enabled:          req.Enabled,
-		Timeout:          time.Duration(300) * time.Second, // 强制设置为300秒，避免超时
+		Timeout:          10 * time.Minute, // 设置为10分钟超时
 		MaxRetries:       req.MaxRetries,
 		RotationStrategy: req.RotationStrategy,
 		APIKeys:          req.APIKeys,

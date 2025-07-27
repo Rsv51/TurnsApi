@@ -6,6 +6,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // RequestLogger 请求日志记录器
@@ -32,7 +34,7 @@ func (r *RequestLogger) Close() error {
 
 // LogRequest 记录请求日志
 func (r *RequestLogger) LogRequest(
-	proxyKeyName, proxyKeyID, providerGroup, openRouterKey, model, requestBody, responseBody string,
+	proxyKeyName, proxyKeyID, providerGroup, openRouterKey, model, requestBody, responseBody, clientIP string,
 	statusCode int, isStream bool, duration time.Duration, err error,
 ) {
 	// 创建日志记录
@@ -48,6 +50,7 @@ func (r *RequestLogger) LogRequest(
 		IsStream:      isStream,
 		Duration:      duration.Milliseconds(),
 		TokensUsed:    r.extractTokensUsed(responseBody),
+		ClientIP:      clientIP,
 		CreatedAt:     time.Now(),
 	}
 
@@ -175,4 +178,36 @@ func (r *RequestLogger) extractTokensUsed(responseBody string) int {
 	}
 
 	return 0
+}
+
+// GetClientIP 获取客户端真实IP地址
+func GetClientIP(c *gin.Context) string {
+	// 优先从X-Forwarded-For头获取
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		// X-Forwarded-For可能包含多个IP，取第一个
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+
+	// 从X-Real-IP头获取
+	if xri := c.GetHeader("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+
+	// 从RemoteAddr获取
+	if ip := c.ClientIP(); ip != "" {
+		return ip
+	}
+
+	// 最后从Request.RemoteAddr获取
+	if remoteAddr := c.Request.RemoteAddr; remoteAddr != "" {
+		if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
+			return remoteAddr[:idx]
+		}
+		return remoteAddr
+	}
+
+	return "unknown"
 }

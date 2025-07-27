@@ -122,7 +122,7 @@ func NewBaseProvider(config *ProviderConfig) *BaseProvider {
 	return &BaseProvider{
 		Config: config,
 		HTTPClient: &http.Client{
-			Timeout: config.Timeout,
+			Timeout: 10 * time.Minute, // 硬编码为10分钟超时
 		},
 	}
 }

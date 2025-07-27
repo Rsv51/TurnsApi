@@ -183,6 +183,7 @@
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">类型</th>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">响应时间</th>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Token数</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">客户端IP</th>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">错误</th>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                         </tr>
@@ -221,6 +222,7 @@
                                 </td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.duration + 'ms'"></td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.tokens_used || '-'"></td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.client_ip || '-'"></td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-red-600 max-w-xs truncate"
                                     :title="log.error" x-text="log.error || '-'"></td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
@@ -306,6 +308,10 @@
                             <div>
                                 <label class="block text-sm font-medium text-gray-700">Token使用量</label>
                                 <p class="mt-1 text-sm text-gray-900" x-text="logDetail ? (logDetail.tokens_used || '未知') : ''"></p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">客户端IP</label>
+                                <p class="mt-1 text-sm text-gray-900" x-text="logDetail ? (logDetail.client_ip || '未知') : ''"></p>
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700">错误信息</label>

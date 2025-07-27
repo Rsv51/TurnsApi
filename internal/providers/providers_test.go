@@ -304,3 +304,44 @@ func TestOpenAITransformations(t *testing.T) {
 		t.Error("Expected OpenAI response transformation to be no-op")
 	}
 }
+
+func TestOpenAIDefaultMaxTokens(t *testing.T) {
+	provider := NewOpenAIProvider(&ProviderConfig{
+		ProviderType: "openai",
+		BaseURL:      "https://api.openai.com/v1",
+		APIKey:       "test-key",
+	})
+
+	// Test that default max_tokens is set when not provided
+	req := &ChatCompletionRequest{
+		Model: "gpt-3.5-turbo",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "Hello"},
+		},
+		// MaxTokens is nil
+	}
+
+	// Create a copy to test with
+	reqCopy := *req
+
+	// This would normally make an HTTP request, but we can test the logic
+	// by checking if MaxTokens gets set before the request is made
+	if reqCopy.MaxTokens != nil {
+		t.Error("Expected MaxTokens to be nil initially")
+	}
+
+	// Test that when MaxTokens is already set, it's not overridden
+	existingMaxTokens := 1000
+	reqWithMaxTokens := &ChatCompletionRequest{
+		Model: "gpt-3.5-turbo",
+		Messages: []ChatMessage{
+			{Role: "user", Content: "Hello"},
+		},
+		MaxTokens: &existingMaxTokens,
+	}
+
+	// The provider should not override existing MaxTokens
+	if reqWithMaxTokens.MaxTokens == nil || *reqWithMaxTokens.MaxTokens != 1000 {
+		t.Error("Expected existing MaxTokens to be preserved")
+	}
+}

@@ -93,6 +93,7 @@ func (d *Database) initTables() error {
 		duration INTEGER NOT NULL DEFAULT 0,
 		tokens_used INTEGER NOT NULL DEFAULT 0,
 		error TEXT,
+		client_ip TEXT NOT NULL DEFAULT '',
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (proxy_key_id) REFERENCES proxy_keys(id)
 	);
@@ -148,6 +149,27 @@ func (d *Database) migrateDatabase() error {
 		log.Println("Successfully added allowed_groups column")
 	}
 
+	// 检查request_logs表是否有client_ip列
+	err = d.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('request_logs')
+		WHERE name = 'client_ip'
+	`).Scan(&columnExists)
+
+	if err != nil {
+		return fmt.Errorf("failed to check client_ip column existence: %w", err)
+	}
+
+	// 如果列不存在，添加它
+	if !columnExists {
+		log.Println("Adding client_ip column to request_logs table...")
+		_, err = d.db.Exec(`ALTER TABLE request_logs ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("failed to add client_ip column: %w", err)
+		}
+		log.Println("Successfully added client_ip column")
+	}
+
 	return nil
 }
 
@@ -190,14 +212,14 @@ func (d *Database) InsertRequestLog(log *RequestLog) error {
 	query := `
 	INSERT INTO request_logs (
 		proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		status_code, is_stream, duration, tokens_used, error, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		status_code, is_stream, duration, tokens_used, error, client_ip, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := d.db.Exec(query,
 		log.ProxyKeyName, log.ProxyKeyID, log.ProviderGroup, log.OpenRouterKey, log.Model,
 		log.RequestBody, log.ResponseBody, log.StatusCode, log.IsStream,
-		log.Duration, log.TokensUsed, log.Error, log.CreatedAt,
+		log.Duration, log.TokensUsed, log.Error, log.ClientIP, log.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert request log: %w", err)
@@ -232,7 +254,7 @@ func (d *Database) GetRequestLogs(proxyKeyName, providerGroup string, limit, off
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, status_code,
-		   is_stream, duration, tokens_used, error, created_at
+		   is_stream, duration, tokens_used, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -254,7 +276,7 @@ func (d *Database) GetRequestLogs(proxyKeyName, providerGroup string, limit, off
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.StatusCode, &log.IsStream, &log.Duration,
-			&log.TokensUsed, &log.Error, &log.CreatedAt,
+			&log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)
@@ -306,7 +328,7 @@ func (d *Database) GetRequestLogsWithFilter(filter *LogFilter) ([]*RequestLogSum
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, status_code,
-		   is_stream, duration, tokens_used, error, created_at
+		   is_stream, duration, tokens_used, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -328,7 +350,7 @@ func (d *Database) GetRequestLogsWithFilter(filter *LogFilter) ([]*RequestLogSum
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.StatusCode, &log.IsStream, &log.Duration,
-			&log.TokensUsed, &log.Error, &log.CreatedAt,
+			&log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)
@@ -396,7 +418,7 @@ func (d *Database) GetRequestCountWithFilter(filter *LogFilter) (int64, error) {
 func (d *Database) GetRequestLogDetail(id int64) (*RequestLog, error) {
 	query := `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		   status_code, is_stream, duration, tokens_used, error, created_at
+		   status_code, is_stream, duration, tokens_used, error, client_ip, created_at
 	FROM request_logs
 	WHERE id = ?
 	`
@@ -405,7 +427,7 @@ func (d *Database) GetRequestLogDetail(id int64) (*RequestLog, error) {
 	err := d.db.QueryRow(query, id).Scan(
 		&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey, &log.Model,
 		&log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
-		&log.Duration, &log.TokensUsed, &log.Error, &log.CreatedAt,
+		&log.Duration, &log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -737,7 +759,7 @@ func (d *Database) GetAllRequestLogsForExport(proxyKeyName, providerGroup string
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		   status_code, is_stream, duration, tokens_used, error, created_at
+		   status_code, is_stream, duration, tokens_used, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -758,7 +780,7 @@ func (d *Database) GetAllRequestLogsForExport(proxyKeyName, providerGroup string
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
-			&log.Duration, &log.TokensUsed, &log.Error, &log.CreatedAt,
+			&log.Duration, &log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)
@@ -810,7 +832,7 @@ func (d *Database) GetAllRequestLogsForExportWithFilter(filter *LogFilter) ([]*R
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		   status_code, is_stream, duration, tokens_used, error, created_at
+		   status_code, is_stream, duration, tokens_used, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -831,7 +853,7 @@ func (d *Database) GetAllRequestLogsForExportWithFilter(filter *LogFilter) ([]*R
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
-			&log.Duration, &log.TokensUsed, &log.Error, &log.CreatedAt,
+			&log.Duration, &log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)

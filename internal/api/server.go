@@ -616,7 +616,7 @@ func (s *Server) handleAvailableModels(c *gin.Context) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// 发送请求
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
 		s.keyManager.ReportError(apiKey, err.Error())

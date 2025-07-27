@@ -174,7 +174,8 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
 			reqBody, _ := json.Marshal(req)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
+			clientIP := logger.GetClientIP(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), "", clientIP, 502, false, time.Since(startTime), err)
 		}
 		
 		c.JSON(http.StatusBadGateway, gin.H{
@@ -195,7 +196,8 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 		proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
 		reqBody, _ := json.Marshal(req)
 		respBody, _ := json.Marshal(response)
-		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), string(respBody), 200, false, time.Since(startTime), nil)
+		clientIP := logger.GetClientIP(c)
+		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), string(respBody), clientIP, 200, false, time.Since(startTime), nil)
 	}
 
 	// 返回响应
@@ -230,7 +232,8 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
 			reqBody, _ := json.Marshal(req)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), "", 502, true, time.Since(startTime), err)
+			clientIP := logger.GetClientIP(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), "", clientIP, 502, true, time.Since(startTime), err)
 		}
 		
 		c.JSON(http.StatusBadGateway, gin.H{
@@ -294,7 +297,8 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
 			reqBody, _ := json.Marshal(req)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), string(responseBuffer), 200, true, duration, nil)
+			clientIP := logger.GetClientIP(c)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), string(responseBuffer), clientIP, 200, true, duration, nil)
 		}
 	}
 }

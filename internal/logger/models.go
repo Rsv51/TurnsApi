@@ -19,6 +19,7 @@ type RequestLog struct {
 	Duration       int64     `json:"duration" db:"duration"` // 毫秒
 	TokensUsed     int       `json:"tokens_used" db:"tokens_used"`
 	Error          string    `json:"error" db:"error"`
+	ClientIP       string    `json:"client_ip" db:"client_ip"` // 客户端IP地址
 	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 }
 
@@ -35,6 +36,7 @@ type RequestLogSummary struct {
 	Duration      int64     `json:"duration"`
 	TokensUsed    int       `json:"tokens_used"`
 	Error         string    `json:"error"`
+	ClientIP      string    `json:"client_ip"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
