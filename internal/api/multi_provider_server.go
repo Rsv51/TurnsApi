@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"log"
 	"net/http"
@@ -173,6 +175,9 @@ func (s *MultiProviderServer) setupRoutes() {
 		// 日志管理
 		admin.GET("/logs", s.handleLogs)
 		admin.GET("/logs/:id", s.handleLogDetail)
+		admin.DELETE("/logs/batch", s.handleDeleteLogs)
+		admin.DELETE("/logs/clear", s.handleClearAllLogs)
+		admin.GET("/logs/export", s.handleExportLogs)
 		admin.GET("/logs/stats/api-keys", s.handleAPIKeyStats)
 		admin.GET("/logs/stats/models", s.handleModelStats)
 		
@@ -1293,26 +1298,32 @@ func (s *MultiProviderServer) handleLogs(c *gin.Context) {
 		return
 	}
 
-	// 获取查询参数
-	limit := 50
-	offset := 0
-	proxyKeyName := c.Query("proxy_key_name")
-	providerGroup := c.Query("provider_group")
+	// 构建筛选条件
+	filter := &logger.LogFilter{
+		ProxyKeyName:  c.Query("proxy_key_name"),
+		ProviderGroup: c.Query("provider_group"),
+		Model:         c.Query("model"),
+		Status:        c.Query("status"),
+		Stream:        c.Query("stream"),
+		Limit:         50,
+		Offset:        0,
+	}
 
+	// 解析分页参数
 	if limitStr := c.Query("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
-			limit = l
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 1000 {
+			filter.Limit = l
 		}
 	}
 
 	if offsetStr := c.Query("offset"); offsetStr != "" {
 		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
-			offset = o
+			filter.Offset = o
 		}
 	}
 
 	// 获取日志列表
-	logs, err := s.requestLogger.GetRequestLogs(proxyKeyName, providerGroup, limit, offset)
+	logs, err := s.requestLogger.GetRequestLogsWithFilter(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -1322,7 +1333,7 @@ func (s *MultiProviderServer) handleLogs(c *gin.Context) {
 	}
 
 	// 获取总数
-	totalCount, err := s.requestLogger.GetRequestCount(proxyKeyName, providerGroup)
+	totalCount, err := s.requestLogger.GetRequestCountWithFilter(filter)
 	if err != nil {
 		log.Printf("Failed to get logs count: %v", err)
 		totalCount = 0
@@ -1418,6 +1429,178 @@ func (s *MultiProviderServer) handleModelStats(c *gin.Context) {
 		"success": true,
 		"stats":   stats,
 	})
+}
+
+// handleDeleteLogs 处理批量删除日志
+func (s *MultiProviderServer) handleDeleteLogs(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Request logger not available",
+		})
+		return
+	}
+
+	var req struct {
+		IDs []int64 `json:"ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	if len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "No log IDs provided",
+		})
+		return
+	}
+
+	deletedCount, err := s.requestLogger.DeleteRequestLogs(req.IDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to delete logs: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"deleted_count": deletedCount,
+		"message":       fmt.Sprintf("Successfully deleted %d log records", deletedCount),
+	})
+}
+
+// handleClearAllLogs 处理清空所有日志
+func (s *MultiProviderServer) handleClearAllLogs(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Request logger not available",
+		})
+		return
+	}
+
+	deletedCount, err := s.requestLogger.ClearAllRequestLogs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to clear all logs: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"deleted_count": deletedCount,
+		"message":       fmt.Sprintf("Successfully cleared all logs, deleted %d records", deletedCount),
+	})
+}
+
+// handleExportLogs 处理导出日志
+func (s *MultiProviderServer) handleExportLogs(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Request logger not available",
+		})
+		return
+	}
+
+	// 构建筛选条件
+	filter := &logger.LogFilter{
+		ProxyKeyName:  c.Query("proxy_key_name"),
+		ProviderGroup: c.Query("provider_group"),
+		Model:         c.Query("model"),
+		Status:        c.Query("status"),
+		Stream:        c.Query("stream"),
+	}
+	format := c.DefaultQuery("format", "csv") // 支持csv和json格式
+
+	// 获取所有日志数据
+	logs, err := s.requestLogger.GetAllRequestLogsForExportWithFilter(filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to export logs: " + err.Error(),
+		})
+		return
+	}
+
+	if format == "csv" {
+		// 导出为CSV格式
+		var buf bytes.Buffer
+		writer := csv.NewWriter(&buf)
+
+		// 写入CSV头部
+		headers := []string{
+			"ID", "代理密钥名称", "代理密钥ID", "提供商分组", "OpenRouter密钥", "模型",
+			"状态码", "是否流式", "响应时间(ms)", "Token使用量", "错误信息", "创建时间",
+		}
+		if err := writer.Write(headers); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Failed to write CSV headers: " + err.Error(),
+			})
+			return
+		}
+
+		// 写入数据行
+		for _, log := range logs {
+			record := []string{
+				fmt.Sprintf("%d", log.ID),
+				log.ProxyKeyName,
+				log.ProxyKeyID,
+				log.ProviderGroup,
+				log.OpenRouterKey,
+				log.Model,
+				fmt.Sprintf("%d", log.StatusCode),
+				fmt.Sprintf("%t", log.IsStream),
+				fmt.Sprintf("%d", log.Duration),
+				fmt.Sprintf("%d", log.TokensUsed),
+				log.Error,
+				log.CreatedAt.Format("2006-01-02 15:04:05"),
+			}
+			if err := writer.Write(record); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   "Failed to write CSV record: " + err.Error(),
+				})
+				return
+			}
+		}
+
+		writer.Flush()
+		if err := writer.Error(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Failed to flush CSV writer: " + err.Error(),
+			})
+			return
+		}
+
+		// 设置响应头
+		filename := fmt.Sprintf("request_logs_%s.csv", time.Now().Format("20060102_150405"))
+		c.Header("Content-Type", "text/csv")
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.Data(http.StatusOK, "text/csv", buf.Bytes())
+	} else {
+		// 导出为JSON格式
+		filename := fmt.Sprintf("request_logs_%s.json", time.Now().Format("20060102_150405"))
+		c.Header("Content-Type", "application/json")
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"logs":    logs,
+			"count":   len(logs),
+		})
+	}
 }
 
 // handleProxyKeys 处理代理密钥列表查询（支持分页和搜索）

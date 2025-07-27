@@ -265,6 +265,133 @@ func (d *Database) GetRequestLogs(proxyKeyName, providerGroup string, limit, off
 	return logs, nil
 }
 
+// GetRequestLogsWithFilter 根据筛选条件获取请求日志列表
+func (d *Database) GetRequestLogsWithFilter(filter *LogFilter) ([]*RequestLogSummary, error) {
+	var query string
+	var args []interface{}
+	var conditions []string
+
+	// 构建WHERE条件
+	if filter.ProxyKeyName != "" {
+		conditions = append(conditions, "proxy_key_name = ?")
+		args = append(args, filter.ProxyKeyName)
+	}
+
+	if filter.ProviderGroup != "" {
+		conditions = append(conditions, "provider_group = ?")
+		args = append(args, filter.ProviderGroup)
+	}
+
+	if filter.Model != "" {
+		conditions = append(conditions, "model = ?")
+		args = append(args, filter.Model)
+	}
+
+	if filter.Status != "" {
+		if filter.Status == "200" {
+			conditions = append(conditions, "status_code = 200")
+		} else if filter.Status == "error" {
+			conditions = append(conditions, "status_code != 200")
+		}
+	}
+
+	if filter.Stream != "" {
+		if filter.Stream == "true" {
+			conditions = append(conditions, "is_stream = 1")
+		} else if filter.Stream == "false" {
+			conditions = append(conditions, "is_stream = 0")
+		}
+	}
+
+	// 构建查询语句
+	query = `
+	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, status_code,
+		   is_stream, duration, tokens_used, error, created_at
+	FROM request_logs`
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query request logs with filter: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*RequestLogSummary
+	for rows.Next() {
+		log := &RequestLogSummary{}
+		err := rows.Scan(
+			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
+			&log.Model, &log.StatusCode, &log.IsStream, &log.Duration,
+			&log.TokensUsed, &log.Error, &log.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan request log: %w", err)
+		}
+		logs = append(logs, log)
+	}
+
+	return logs, nil
+}
+
+// GetRequestCountWithFilter 根据筛选条件获取请求总数
+func (d *Database) GetRequestCountWithFilter(filter *LogFilter) (int64, error) {
+	var query string
+	var args []interface{}
+	var conditions []string
+
+	// 构建WHERE条件（与GetRequestLogsWithFilter保持一致）
+	if filter.ProxyKeyName != "" {
+		conditions = append(conditions, "proxy_key_name = ?")
+		args = append(args, filter.ProxyKeyName)
+	}
+
+	if filter.ProviderGroup != "" {
+		conditions = append(conditions, "provider_group = ?")
+		args = append(args, filter.ProviderGroup)
+	}
+
+	if filter.Model != "" {
+		conditions = append(conditions, "model = ?")
+		args = append(args, filter.Model)
+	}
+
+	if filter.Status != "" {
+		if filter.Status == "200" {
+			conditions = append(conditions, "status_code = 200")
+		} else if filter.Status == "error" {
+			conditions = append(conditions, "status_code != 200")
+		}
+	}
+
+	if filter.Stream != "" {
+		if filter.Stream == "true" {
+			conditions = append(conditions, "is_stream = 1")
+		} else if filter.Stream == "false" {
+			conditions = append(conditions, "is_stream = 0")
+		}
+	}
+
+	// 构建查询语句
+	query = "SELECT COUNT(*) FROM request_logs"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var count int64
+	err := d.db.QueryRow(query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get request count with filter: %w", err)
+	}
+
+	return count, nil
+}
+
 // GetRequestLogDetail 获取请求日志详情
 func (d *Database) GetRequestLogDetail(id int64) (*RequestLog, error) {
 	query := `
@@ -529,7 +656,7 @@ func (d *Database) DeleteProxyKey(keyID string) error {
 // CleanupOldLogs 清理旧日志（保留指定天数的日志）
 func (d *Database) CleanupOldLogs(retentionDays int) error {
 	query := `DELETE FROM request_logs WHERE created_at < datetime('now', '-' || ? || ' days')`
-	
+
 	result, err := d.db.Exec(query, retentionDays)
 	if err != nil {
 		return fmt.Errorf("failed to cleanup old logs: %w", err)
@@ -542,4 +669,175 @@ func (d *Database) CleanupOldLogs(retentionDays int) error {
 
 	log.Printf("Cleaned up %d old log records", rowsAffected)
 	return nil
+}
+
+// DeleteRequestLogs 批量删除指定ID的请求日志
+func (d *Database) DeleteRequestLogs(ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	// 构建IN子句的占位符
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf("DELETE FROM request_logs WHERE id IN (%s)", strings.Join(placeholders, ","))
+
+	result, err := d.db.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete request logs: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected, nil
+}
+
+// ClearAllRequestLogs 清空所有请求日志
+func (d *Database) ClearAllRequestLogs() (int64, error) {
+	query := `DELETE FROM request_logs`
+
+	result, err := d.db.Exec(query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to clear all request logs: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected, nil
+}
+
+// GetAllRequestLogsForExport 获取所有请求日志用于导出（包含完整信息）
+func (d *Database) GetAllRequestLogsForExport(proxyKeyName, providerGroup string) ([]*RequestLog, error) {
+	var query string
+	var args []interface{}
+	var conditions []string
+
+	// 构建WHERE条件
+	if proxyKeyName != "" {
+		conditions = append(conditions, "proxy_key_name = ?")
+		args = append(args, proxyKeyName)
+	}
+
+	if providerGroup != "" {
+		conditions = append(conditions, "provider_group = ?")
+		args = append(args, providerGroup)
+	}
+
+	// 构建查询语句
+	query = `
+	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
+		   status_code, is_stream, duration, tokens_used, error, created_at
+	FROM request_logs`
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query request logs for export: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*RequestLog
+	for rows.Next() {
+		log := &RequestLog{}
+		err := rows.Scan(
+			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
+			&log.Model, &log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
+			&log.Duration, &log.TokensUsed, &log.Error, &log.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan request log: %w", err)
+		}
+		logs = append(logs, log)
+	}
+
+	return logs, nil
+}
+
+// GetAllRequestLogsForExportWithFilter 根据筛选条件获取所有请求日志用于导出（包含完整信息）
+func (d *Database) GetAllRequestLogsForExportWithFilter(filter *LogFilter) ([]*RequestLog, error) {
+	var query string
+	var args []interface{}
+	var conditions []string
+
+	// 构建WHERE条件（与GetRequestLogsWithFilter保持一致）
+	if filter.ProxyKeyName != "" {
+		conditions = append(conditions, "proxy_key_name = ?")
+		args = append(args, filter.ProxyKeyName)
+	}
+
+	if filter.ProviderGroup != "" {
+		conditions = append(conditions, "provider_group = ?")
+		args = append(args, filter.ProviderGroup)
+	}
+
+	if filter.Model != "" {
+		conditions = append(conditions, "model = ?")
+		args = append(args, filter.Model)
+	}
+
+	if filter.Status != "" {
+		if filter.Status == "200" {
+			conditions = append(conditions, "status_code = 200")
+		} else if filter.Status == "error" {
+			conditions = append(conditions, "status_code != 200")
+		}
+	}
+
+	if filter.Stream != "" {
+		if filter.Stream == "true" {
+			conditions = append(conditions, "is_stream = 1")
+		} else if filter.Stream == "false" {
+			conditions = append(conditions, "is_stream = 0")
+		}
+	}
+
+	// 构建查询语句
+	query = `
+	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
+		   status_code, is_stream, duration, tokens_used, error, created_at
+	FROM request_logs`
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query request logs for export with filter: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*RequestLog
+	for rows.Next() {
+		log := &RequestLog{}
+		err := rows.Scan(
+			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
+			&log.Model, &log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
+			&log.Duration, &log.TokensUsed, &log.Error, &log.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan request log: %w", err)
+		}
+		logs = append(logs, log)
+	}
+
+	return logs, nil
 }

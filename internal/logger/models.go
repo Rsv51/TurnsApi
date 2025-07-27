@@ -69,3 +69,14 @@ type ModelStats struct {
 	TotalTokens  int64  `json:"total_tokens"`
 	AvgDuration  float64 `json:"avg_duration"`
 }
+
+// LogFilter 日志筛选条件
+type LogFilter struct {
+	ProxyKeyName  string `json:"proxy_key_name"`
+	ProviderGroup string `json:"provider_group"`
+	Model         string `json:"model"`
+	Status        string `json:"status"`        // "200" 或 "error"
+	Stream        string `json:"stream"`        // "true" 或 "false"
+	Limit         int    `json:"limit"`
+	Offset        int    `json:"offset"`
+}

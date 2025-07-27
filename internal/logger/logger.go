@@ -67,6 +67,16 @@ func (r *RequestLogger) GetRequestLogs(proxyKeyName, providerGroup string, limit
 	return r.db.GetRequestLogs(proxyKeyName, providerGroup, limit, offset)
 }
 
+// GetRequestLogsWithFilter 根据筛选条件获取请求日志列表
+func (r *RequestLogger) GetRequestLogsWithFilter(filter *LogFilter) ([]*RequestLogSummary, error) {
+	return r.db.GetRequestLogsWithFilter(filter)
+}
+
+// GetRequestCountWithFilter 根据筛选条件获取请求总数
+func (r *RequestLogger) GetRequestCountWithFilter(filter *LogFilter) (int64, error) {
+	return r.db.GetRequestCountWithFilter(filter)
+}
+
 // GetRequestLogDetail 获取请求日志详情
 func (r *RequestLogger) GetRequestLogDetail(id int64) (*RequestLog, error) {
 	return r.db.GetRequestLogDetail(id)
@@ -115,6 +125,26 @@ func (r *RequestLogger) DeleteProxyKey(keyID string) error {
 // CleanupOldLogs 清理旧日志
 func (r *RequestLogger) CleanupOldLogs(retentionDays int) error {
 	return r.db.CleanupOldLogs(retentionDays)
+}
+
+// DeleteRequestLogs 批量删除请求日志
+func (r *RequestLogger) DeleteRequestLogs(ids []int64) (int64, error) {
+	return r.db.DeleteRequestLogs(ids)
+}
+
+// ClearAllRequestLogs 清空所有请求日志
+func (r *RequestLogger) ClearAllRequestLogs() (int64, error) {
+	return r.db.ClearAllRequestLogs()
+}
+
+// GetAllRequestLogsForExport 获取所有请求日志用于导出
+func (r *RequestLogger) GetAllRequestLogsForExport(proxyKeyName, providerGroup string) ([]*RequestLog, error) {
+	return r.db.GetAllRequestLogsForExport(proxyKeyName, providerGroup)
+}
+
+// GetAllRequestLogsForExportWithFilter 根据筛选条件获取所有请求日志用于导出
+func (r *RequestLogger) GetAllRequestLogsForExportWithFilter(filter *LogFilter) ([]*RequestLog, error) {
+	return r.db.GetAllRequestLogsForExportWithFilter(filter)
 }
 
 // maskAPIKey 遮蔽API密钥敏感信息
