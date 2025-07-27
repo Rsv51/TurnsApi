@@ -32,13 +32,14 @@ func (r *RequestLogger) Close() error {
 
 // LogRequest 记录请求日志
 func (r *RequestLogger) LogRequest(
-	proxyKeyName, proxyKeyID, openRouterKey, model, requestBody, responseBody string,
+	proxyKeyName, proxyKeyID, providerGroup, openRouterKey, model, requestBody, responseBody string,
 	statusCode int, isStream bool, duration time.Duration, err error,
 ) {
 	// 创建日志记录
 	requestLog := &RequestLog{
 		ProxyKeyName:  proxyKeyName,
 		ProxyKeyID:    proxyKeyID,
+		ProviderGroup: providerGroup,
 		OpenRouterKey: r.maskAPIKey(openRouterKey),
 		Model:         model,
 		RequestBody:   requestBody,
@@ -62,8 +63,8 @@ func (r *RequestLogger) LogRequest(
 }
 
 // GetRequestLogs 获取请求日志列表
-func (r *RequestLogger) GetRequestLogs(proxyKeyName string, limit, offset int) ([]*RequestLogSummary, error) {
-	return r.db.GetRequestLogs(proxyKeyName, limit, offset)
+func (r *RequestLogger) GetRequestLogs(proxyKeyName, providerGroup string, limit, offset int) ([]*RequestLogSummary, error) {
+	return r.db.GetRequestLogs(proxyKeyName, providerGroup, limit, offset)
 }
 
 // GetRequestLogDetail 获取请求日志详情
@@ -82,8 +83,8 @@ func (r *RequestLogger) GetModelStats() ([]*ModelStats, error) {
 }
 
 // GetRequestCount 获取请求总数
-func (r *RequestLogger) GetRequestCount(proxyKeyName string) (int64, error) {
-	return r.db.GetRequestCount(proxyKeyName)
+func (r *RequestLogger) GetRequestCount(proxyKeyName, providerGroup string) (int64, error) {
+	return r.db.GetRequestCount(proxyKeyName, providerGroup)
 }
 
 // InsertProxyKey 插入代理密钥

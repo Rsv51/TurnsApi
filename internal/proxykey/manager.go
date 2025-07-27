@@ -13,14 +13,15 @@ import (
 
 // ProxyKey 代理服务API密钥
 type ProxyKey struct {
-	ID          string    `json:"id"`
-	Key         string    `json:"key"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	LastUsed    time.Time `json:"last_used"`
-	UsageCount  int64     `json:"usage_count"`
-	IsActive    bool      `json:"is_active"`
+	ID            string    `json:"id"`
+	Key           string    `json:"key"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	AllowedGroups []string  `json:"allowed_groups"` // 允许访问的分组ID列表
+	CreatedAt     time.Time `json:"created_at"`
+	LastUsed      time.Time `json:"last_used"`
+	UsageCount    int64     `json:"usage_count"`
+	IsActive      bool      `json:"is_active"`
 }
 
 // Manager 代理密钥管理器
@@ -69,18 +70,19 @@ func (m *Manager) loadKeysFromDB() error {
 	for _, dbKey := range dbKeys {
 		// 转换数据库模型到内存模型
 		key := &ProxyKey{
-			ID:          dbKey.ID,
-			Key:         dbKey.Key,
-			Name:        dbKey.Name,
-			Description: dbKey.Description,
-			CreatedAt:   dbKey.CreatedAt,
-			IsActive:    dbKey.IsActive,
+			ID:            dbKey.ID,
+			Key:           dbKey.Key,
+			Name:          dbKey.Name,
+			Description:   dbKey.Description,
+			AllowedGroups: dbKey.AllowedGroups,
+			CreatedAt:     dbKey.CreatedAt,
+			IsActive:      dbKey.IsActive,
 		}
-		
+
 		if dbKey.LastUsedAt != nil {
 			key.LastUsed = *dbKey.LastUsedAt
 		}
-		
+
 		m.keys[key.ID] = key
 	}
 	
@@ -89,7 +91,7 @@ func (m *Manager) loadKeysFromDB() error {
 }
 
 // GenerateKey 生成新的代理API密钥
-func (m *Manager) GenerateKey(name, description string) (*ProxyKey, error) {
+func (m *Manager) GenerateKey(name, description string, allowedGroups []string) (*ProxyKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -104,26 +106,28 @@ func (m *Manager) GenerateKey(name, description string) (*ProxyKey, error) {
 	now := time.Now()
 
 	key := &ProxyKey{
-		ID:          id,
-		Key:         keyStr,
-		Name:        name,
-		Description: description,
-		CreatedAt:   now,
-		IsActive:    true,
+		ID:            id,
+		Key:           keyStr,
+		Name:          name,
+		Description:   description,
+		AllowedGroups: allowedGroups,
+		CreatedAt:     now,
+		IsActive:      true,
 	}
 
 	// 保存到数据库
 	if m.requestLogger != nil {
 		dbKey := &logger.ProxyKey{
-			ID:          id,
-			Name:        name,
-			Description: description,
-			Key:         keyStr,
-			IsActive:    true,
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:            id,
+			Name:          name,
+			Description:   description,
+			Key:           keyStr,
+			AllowedGroups: allowedGroups,
+			IsActive:      true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		}
-		
+
 		if err := m.requestLogger.InsertProxyKey(dbKey); err != nil {
 			return nil, fmt.Errorf("failed to save proxy key to database: %w", err)
 		}
@@ -142,13 +146,56 @@ func (m *Manager) ValidateKey(keyStr string) (interface{}, bool) {
 		if key.Key == keyStr && key.IsActive {
 			// 返回logger.ProxyKey类型以便认证中间件使用
 			dbKey := &logger.ProxyKey{
-				ID:          key.ID,
-				Name:        key.Name,
-				Description: key.Description,
-				Key:         key.Key,
-				IsActive:    key.IsActive,
-				CreatedAt:   key.CreatedAt,
-				UpdatedAt:   key.CreatedAt,
+				ID:            key.ID,
+				Name:          key.Name,
+				Description:   key.Description,
+				Key:           key.Key,
+				AllowedGroups: key.AllowedGroups,
+				IsActive:      key.IsActive,
+				CreatedAt:     key.CreatedAt,
+				UpdatedAt:     key.CreatedAt,
+			}
+			if !key.LastUsed.IsZero() {
+				dbKey.LastUsedAt = &key.LastUsed
+			}
+			return dbKey, true
+		}
+	}
+	return nil, false
+}
+
+// ValidateKeyForGroup 验证代理API密钥是否可以访问指定分组
+func (m *Manager) ValidateKeyForGroup(keyStr, groupID string) (interface{}, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, key := range m.keys {
+		if key.Key == keyStr && key.IsActive {
+			// 检查分组访问权限
+			if len(key.AllowedGroups) > 0 {
+				hasAccess := false
+				for _, allowedGroup := range key.AllowedGroups {
+					if allowedGroup == groupID {
+						hasAccess = true
+						break
+					}
+				}
+				if !hasAccess {
+					return nil, false // 没有访问权限
+				}
+			}
+			// 如果AllowedGroups为空，表示可以访问所有分组
+
+			// 返回logger.ProxyKey类型以便认证中间件使用
+			dbKey := &logger.ProxyKey{
+				ID:            key.ID,
+				Name:          key.Name,
+				Description:   key.Description,
+				Key:           key.Key,
+				AllowedGroups: key.AllowedGroups,
+				IsActive:      key.IsActive,
+				CreatedAt:     key.CreatedAt,
+				UpdatedAt:     key.CreatedAt,
 			}
 			if !key.LastUsed.IsZero() {
 				dbKey.LastUsedAt = &key.LastUsed

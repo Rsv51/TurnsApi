@@ -434,7 +434,7 @@ func (s *Server) handleGenerateProxyKey(c *gin.Context) {
 		return
 	}
 
-	key, err := s.proxyKeyManager.GenerateKey(req.Name, req.Description)
+	key, err := s.proxyKeyManager.GenerateKey(req.Name, req.Description, []string{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to generate proxy key",
@@ -675,6 +675,7 @@ func (s *Server) handleRequestLogs(c *gin.Context) {
 
 	// 解析查询参数
 	proxyKeyName := c.Query("proxy_key_name")
+	providerGroup := c.Query("provider_group")
 	limitStr := c.DefaultQuery("limit", "50")
 	offsetStr := c.DefaultQuery("offset", "0")
 
@@ -689,7 +690,7 @@ func (s *Server) handleRequestLogs(c *gin.Context) {
 	}
 
 	// 获取日志列表
-	logs, err := s.requestLogger.GetRequestLogs(proxyKeyName, limit, offset)
+	logs, err := s.requestLogger.GetRequestLogs(proxyKeyName, providerGroup, limit, offset)
 	if err != nil {
 		log.Printf("Failed to get request logs: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -700,7 +701,7 @@ func (s *Server) handleRequestLogs(c *gin.Context) {
 	}
 
 	// 获取总数
-	totalCount, err := s.requestLogger.GetRequestCount(proxyKeyName)
+	totalCount, err := s.requestLogger.GetRequestCount(proxyKeyName, providerGroup)
 	if err != nil {
 		log.Printf("Failed to get request count: %v", err)
 		totalCount = 0

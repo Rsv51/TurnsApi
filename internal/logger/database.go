@@ -2,10 +2,12 @@ package logger
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -43,6 +45,12 @@ func NewDatabase(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
 
+	// 执行数据库迁移
+	if err := database.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
+	}
+
 	return database, nil
 }
 
@@ -63,6 +71,7 @@ func (d *Database) initTables() error {
 		name TEXT NOT NULL,
 		description TEXT,
 		key TEXT NOT NULL UNIQUE,
+		allowed_groups TEXT, -- JSON数组，存储允许访问的分组ID
 		is_active BOOLEAN NOT NULL DEFAULT 1,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -74,6 +83,7 @@ func (d *Database) initTables() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		proxy_key_name TEXT NOT NULL,
 		proxy_key_id TEXT NOT NULL,
+		provider_group TEXT NOT NULL DEFAULT '',
 		openrouter_key TEXT NOT NULL,
 		model TEXT NOT NULL,
 		request_body TEXT NOT NULL,
@@ -94,6 +104,7 @@ func (d *Database) initTables() error {
 	
 	CREATE INDEX IF NOT EXISTS idx_request_logs_proxy_key_id ON request_logs(proxy_key_id);
 	CREATE INDEX IF NOT EXISTS idx_request_logs_proxy_key_name ON request_logs(proxy_key_name);
+	CREATE INDEX IF NOT EXISTS idx_request_logs_provider_group ON request_logs(provider_group);
 	CREATE INDEX IF NOT EXISTS idx_request_logs_model ON request_logs(model);
 	CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at);
 	CREATE INDEX IF NOT EXISTS idx_request_logs_status_code ON request_logs(status_code);
@@ -104,7 +115,73 @@ func (d *Database) initTables() error {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
+	// 执行数据库迁移
+	if err := d.migrateDatabase(); err != nil {
+		return fmt.Errorf("failed to migrate database: %w", err)
+	}
+
 	log.Println("Database tables initialized successfully")
+	return nil
+}
+
+// migrateDatabase 执行数据库迁移
+func (d *Database) migrateDatabase() error {
+	// 检查proxy_keys表是否有allowed_groups列
+	var columnExists bool
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('proxy_keys')
+		WHERE name = 'allowed_groups'
+	`).Scan(&columnExists)
+
+	if err != nil {
+		return fmt.Errorf("failed to check column existence: %w", err)
+	}
+
+	// 如果列不存在，添加它
+	if !columnExists {
+		log.Println("Adding allowed_groups column to proxy_keys table...")
+		_, err = d.db.Exec(`ALTER TABLE proxy_keys ADD COLUMN allowed_groups TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add allowed_groups column: %w", err)
+		}
+		log.Println("Successfully added allowed_groups column")
+	}
+
+	return nil
+}
+
+// migrate 执行数据库迁移
+func (d *Database) migrate() error {
+	// 检查是否需要添加provider_group字段
+	var columnExists bool
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('request_logs')
+		WHERE name = 'provider_group'
+	`).Scan(&columnExists)
+
+	if err != nil {
+		return fmt.Errorf("failed to check provider_group column: %w", err)
+	}
+
+	// 如果字段不存在，添加它
+	if !columnExists {
+		log.Printf("Adding provider_group column to request_logs table...")
+		_, err = d.db.Exec(`ALTER TABLE request_logs ADD COLUMN provider_group TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("failed to add provider_group column: %w", err)
+		}
+
+		// 添加索引
+		_, err = d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_request_logs_provider_group ON request_logs(provider_group)`)
+		if err != nil {
+			return fmt.Errorf("failed to create provider_group index: %w", err)
+		}
+
+		log.Printf("Successfully added provider_group column and index")
+	}
+
 	return nil
 }
 
@@ -112,14 +189,14 @@ func (d *Database) initTables() error {
 func (d *Database) InsertRequestLog(log *RequestLog) error {
 	query := `
 	INSERT INTO request_logs (
-		proxy_key_name, proxy_key_id, openrouter_key, model, request_body, response_body, 
+		proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
 		status_code, is_stream, duration, tokens_used, error, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := d.db.Exec(query,
-		log.ProxyKeyName, log.ProxyKeyID, log.OpenRouterKey, log.Model, 
-		log.RequestBody, log.ResponseBody, log.StatusCode, log.IsStream, 
+		log.ProxyKeyName, log.ProxyKeyID, log.ProviderGroup, log.OpenRouterKey, log.Model,
+		log.RequestBody, log.ResponseBody, log.StatusCode, log.IsStream,
 		log.Duration, log.TokensUsed, log.Error, log.CreatedAt,
 	)
 	if err != nil {
@@ -136,30 +213,34 @@ func (d *Database) InsertRequestLog(log *RequestLog) error {
 }
 
 // GetRequestLogs 获取请求日志列表
-func (d *Database) GetRequestLogs(proxyKeyName string, limit, offset int) ([]*RequestLogSummary, error) {
+func (d *Database) GetRequestLogs(proxyKeyName, providerGroup string, limit, offset int) ([]*RequestLogSummary, error) {
 	var query string
 	var args []interface{}
+	var conditions []string
 
+	// 构建WHERE条件
 	if proxyKeyName != "" {
-		query = `
-		SELECT id, proxy_key_name, proxy_key_id, openrouter_key, model, status_code, 
-			   is_stream, duration, tokens_used, error, created_at
-		FROM request_logs 
-		WHERE proxy_key_name = ?
-		ORDER BY created_at DESC 
-		LIMIT ? OFFSET ?
-		`
-		args = []interface{}{proxyKeyName, limit, offset}
-	} else {
-		query = `
-		SELECT id, proxy_key_name, proxy_key_id, openrouter_key, model, status_code, 
-			   is_stream, duration, tokens_used, error, created_at
-		FROM request_logs 
-		ORDER BY created_at DESC 
-		LIMIT ? OFFSET ?
-		`
-		args = []interface{}{limit, offset}
+		conditions = append(conditions, "proxy_key_name = ?")
+		args = append(args, proxyKeyName)
 	}
+
+	if providerGroup != "" {
+		conditions = append(conditions, "provider_group = ?")
+		args = append(args, providerGroup)
+	}
+
+	// 构建查询语句
+	query = `
+	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, status_code,
+		   is_stream, duration, tokens_used, error, created_at
+	FROM request_logs`
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
@@ -171,8 +252,8 @@ func (d *Database) GetRequestLogs(proxyKeyName string, limit, offset int) ([]*Re
 	for rows.Next() {
 		log := &RequestLogSummary{}
 		err := rows.Scan(
-			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.OpenRouterKey, 
-			&log.Model, &log.StatusCode, &log.IsStream, &log.Duration, 
+			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
+			&log.Model, &log.StatusCode, &log.IsStream, &log.Duration,
 			&log.TokensUsed, &log.Error, &log.CreatedAt,
 		)
 		if err != nil {
@@ -187,16 +268,16 @@ func (d *Database) GetRequestLogs(proxyKeyName string, limit, offset int) ([]*Re
 // GetRequestLogDetail 获取请求日志详情
 func (d *Database) GetRequestLogDetail(id int64) (*RequestLog, error) {
 	query := `
-	SELECT id, proxy_key_name, proxy_key_id, openrouter_key, model, request_body, response_body, 
+	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
 		   status_code, is_stream, duration, tokens_used, error, created_at
-	FROM request_logs 
+	FROM request_logs
 	WHERE id = ?
 	`
 
 	log := &RequestLog{}
 	err := d.db.QueryRow(query, id).Scan(
-		&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.OpenRouterKey, &log.Model, 
-		&log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream, 
+		&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey, &log.Model,
+		&log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
 		&log.Duration, &log.TokensUsed, &log.Error, &log.CreatedAt,
 	)
 	if err != nil {
@@ -283,16 +364,26 @@ func (d *Database) GetModelStats() ([]*ModelStats, error) {
 }
 
 // GetRequestCount 获取请求总数
-func (d *Database) GetRequestCount(proxyKeyName string) (int64, error) {
+func (d *Database) GetRequestCount(proxyKeyName, providerGroup string) (int64, error) {
 	var query string
 	var args []interface{}
+	var conditions []string
 
+	// 构建WHERE条件
 	if proxyKeyName != "" {
-		query = "SELECT COUNT(*) FROM request_logs WHERE proxy_key_name = ?"
-		args = []interface{}{proxyKeyName}
-	} else {
-		query = "SELECT COUNT(*) FROM request_logs"
-		args = []interface{}{}
+		conditions = append(conditions, "proxy_key_name = ?")
+		args = append(args, proxyKeyName)
+	}
+
+	if providerGroup != "" {
+		conditions = append(conditions, "provider_group = ?")
+		args = append(args, providerGroup)
+	}
+
+	// 构建查询语句
+	query = "SELECT COUNT(*) FROM request_logs"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	var count int64
@@ -306,13 +397,27 @@ func (d *Database) GetRequestCount(proxyKeyName string) (int64, error) {
 
 // InsertProxyKey 插入代理密钥
 func (d *Database) InsertProxyKey(key *ProxyKey) error {
+	// 将AllowedGroups转换为JSON字符串
+	allowedGroupsJSON := "[]"
+	if key.AllowedGroups != nil && len(key.AllowedGroups) > 0 {
+		if jsonBytes, err := json.Marshal(key.AllowedGroups); err == nil {
+			allowedGroupsJSON = string(jsonBytes)
+		} else {
+			log.Printf("Failed to marshal AllowedGroups: %v", err)
+		}
+	}
+
+
+
+
+
 	query := `
-	INSERT INTO proxy_keys (id, name, description, key, is_active, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO proxy_keys (id, name, description, key, allowed_groups, is_active, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := d.db.Exec(query,
-		key.ID, key.Name, key.Description, key.Key, key.IsActive,
+		key.ID, key.Name, key.Description, key.Key, allowedGroupsJSON, key.IsActive,
 		key.CreatedAt, key.UpdatedAt,
 	)
 	if err != nil {
@@ -325,14 +430,15 @@ func (d *Database) InsertProxyKey(key *ProxyKey) error {
 // GetProxyKey 根据密钥获取代理密钥信息
 func (d *Database) GetProxyKey(keyValue string) (*ProxyKey, error) {
 	query := `
-	SELECT id, name, description, key, is_active, created_at, updated_at, last_used_at
-	FROM proxy_keys 
+	SELECT id, name, description, key, allowed_groups, is_active, created_at, updated_at, last_used_at
+	FROM proxy_keys
 	WHERE key = ? AND is_active = 1
 	`
 
 	key := &ProxyKey{}
+	var allowedGroupsJSON string
 	err := d.db.QueryRow(query, keyValue).Scan(
-		&key.ID, &key.Name, &key.Description, &key.Key, &key.IsActive,
+		&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &key.IsActive,
 		&key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
 	)
 	if err != nil {
@@ -342,14 +448,23 @@ func (d *Database) GetProxyKey(keyValue string) (*ProxyKey, error) {
 		return nil, fmt.Errorf("failed to get proxy key: %w", err)
 	}
 
+	// 解析AllowedGroups JSON
+	if allowedGroupsJSON != "" {
+		if err := json.Unmarshal([]byte(allowedGroupsJSON), &key.AllowedGroups); err != nil {
+			key.AllowedGroups = []string{} // 解析失败时使用空数组
+		}
+	} else {
+		key.AllowedGroups = []string{}
+	}
+
 	return key, nil
 }
 
 // GetAllProxyKeys 获取所有代理密钥
 func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 	query := `
-	SELECT id, name, description, key, is_active, created_at, updated_at, last_used_at
-	FROM proxy_keys 
+	SELECT id, name, description, key, allowed_groups, is_active, created_at, updated_at, last_used_at
+	FROM proxy_keys
 	ORDER BY created_at DESC
 	`
 
@@ -362,13 +477,24 @@ func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 	var keys []*ProxyKey
 	for rows.Next() {
 		key := &ProxyKey{}
+		var allowedGroupsJSON string
 		err := rows.Scan(
-			&key.ID, &key.Name, &key.Description, &key.Key, &key.IsActive,
+			&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &key.IsActive,
 			&key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan proxy key: %w", err)
 		}
+
+		// 解析AllowedGroups JSON
+		if allowedGroupsJSON != "" {
+			if err := json.Unmarshal([]byte(allowedGroupsJSON), &key.AllowedGroups); err != nil {
+				key.AllowedGroups = []string{} // 解析失败时使用空数组
+			}
+		} else {
+			key.AllowedGroups = []string{}
+		}
+
 		keys = append(keys, key)
 	}
 

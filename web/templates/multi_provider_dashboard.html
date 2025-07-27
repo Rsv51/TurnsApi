@@ -1,0 +1,2669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8" x-data="multiProviderDashboard()">
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">TurnsAPI 多提供商仪表板</h1>
+                <p class="text-gray-600">实时监控多个API提供商的状态和性能</p>
+            </div>
+            <div class="flex space-x-4">
+                <a href="/" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    返回首页
+                </a>
+                <a href="/groups" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    分组管理
+                </a>
+                <a href="/logs" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    请求日志
+                </a>
+                <button @click="refreshData()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    刷新数据
+                </button>
+                <button onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    登出
+                </button>
+            </div>
+        </div>
+
+        <!-- System Overview - 第一排 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <!-- 系统状态 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-all duration-200">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            <div class="w-12 h-12 rounded-lg flex items-center justify-center" :class="systemHealth.status === 'healthy' ? 'bg-green-100' : systemHealth.status === 'degraded' ? 'bg-yellow-100' : 'bg-red-100'">
+                                <svg class="w-6 h-6" :class="systemHealth.status === 'healthy' ? 'text-green-600' : systemHealth.status === 'degraded' ? 'text-yellow-600' : 'text-red-600'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-500">系统状态</p>
+                            <p class="text-xl font-bold" :class="systemHealth.status === 'healthy' ? 'text-green-600' : systemHealth.status === 'degraded' ? 'text-yellow-600' : 'text-red-600'" x-text="getStatusText(systemHealth.status)"></p>
+                        </div>
+                    </div>
+                    <button @click="loadSystemHealth()" :disabled="loadingSystemHealth" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-gray-700 bg-gray-100 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50 transition-all duration-200">
+                        <svg x-show="!loadingSystemHealth" class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        <svg x-show="loadingSystemHealth" class="animate-spin w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-show="!loadingSystemHealth">刷新</span>
+                        <span x-show="loadingSystemHealth">刷新中</span>
+                    </button>
+                </div>
+                <div class="space-y-2">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">CPU使用率</span>
+                        <span class="font-medium" x-text="formatPercentage(systemHealth.cpu_usage)">0%</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">内存使用</span>
+                        <span class="font-medium" x-text="formatPercentage(systemHealth.memory_usage)">0%</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">最后检查</span>
+                        <span class="font-medium" x-text="formatDate(systemHealth.last_check)">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 提供商分组 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-all duration-200">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-500">提供商分组</p>
+                            <p class="text-xl font-bold text-blue-600" x-text="systemHealth.healthy_groups + '/' + systemHealth.total_groups"></p>
+                        </div>
+                    </div>
+                    <button @click="loadProviderStatuses()" :disabled="loadingProviderStatuses" class="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-gray-700 bg-gray-100 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50 transition-all duration-200">
+                        <svg x-show="!loadingProviderStatuses" class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        <svg x-show="loadingProviderStatuses" class="animate-spin w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-show="!loadingProviderStatuses">刷新</span>
+                        <span x-show="loadingProviderStatuses">刷新中</span>
+                    </button>
+                </div>
+                <div class="space-y-2">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">健康分组</span>
+                        <span class="font-medium text-green-600" x-text="systemHealth.healthy_groups || 0">0</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">异常分组</span>
+                        <span class="font-medium text-red-600" x-text="(systemHealth.total_groups || 0) - (systemHealth.healthy_groups || 0)">0</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">平均响应</span>
+                        <span class="font-medium" x-text="formatResponseTime(averageResponseTime)">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 运行时间 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-all duration-200">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            <div class="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-500">运行时间</p>
+                            <p class="text-xl font-bold text-orange-600" x-text="formatDuration(systemHealth.uptime)"></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="space-y-2">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">启动时间</span>
+                        <span class="font-medium" x-text="formatDate(systemHealth.start_time)">-</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">版本信息</span>
+                        <span class="font-medium" x-text="systemHealth.version || 'v2.0.0'">v2.0.0</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">请求总数</span>
+                        <span class="font-medium" x-text="systemHealth.total_requests || 0">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API密钥状态 - 第二排 -->
+        <div class="mb-8">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-all duration-200">
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9a2 2 0 012-2m0 0V7a2 2 0 012-2h4zm-6 2v6h4V9H9z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-lg font-semibold text-gray-800">API密钥状态</p>
+                            <p class="text-sm text-gray-500" x-show="keyStatus.last_updated">
+                                更新于 <span x-text="keyStatus.last_updated"></span>
+                            </p>
+                            <p class="text-sm text-gray-400" x-show="!keyStatus.last_updated">
+                                点击"手动检测"获取最新状态
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button @click="refreshKeyStatus()" :disabled="loadingKeyStatus" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-purple-700 bg-purple-100 hover:bg-purple-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200">
+                            <svg x-show="!loadingKeyStatus" class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            <svg x-show="loadingKeyStatus" class="animate-spin w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span x-show="!loadingKeyStatus">刷新状态</span>
+                            <span x-show="loadingKeyStatus">刷新中...</span>
+                        </button>
+                        <button @click="loadPersistedValidationStatus()" :disabled="loadingValidation" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-all duration-200">
+                            <svg x-show="!loadingValidation" class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <svg x-show="loadingValidation" class="animate-spin w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span x-show="!loadingValidation">检查所有密钥</span>
+                            <span x-show="loadingValidation">检查中...</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 密钥统计 -->
+                <div class="grid grid-cols-3 gap-8">
+                    <div class="text-center">
+                        <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <div class="w-6 h-6 bg-green-500 rounded-full"></div>
+                        </div>
+                        <div class="text-2xl font-bold text-green-600 mb-1" x-text="keyStatus.total_valid || 0">0</div>
+                        <div class="text-sm text-gray-500">有效密钥</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <div class="w-6 h-6 bg-red-500 rounded-full"></div>
+                        </div>
+                        <div class="text-2xl font-bold text-red-600 mb-1" x-text="keyStatus.total_invalid || 0">0</div>
+                        <div class="text-sm text-gray-500">无效密钥</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <div class="w-6 h-6 bg-gray-500 rounded-full"></div>
+                        </div>
+                        <div class="text-2xl font-bold text-gray-600 mb-1" x-text="keyStatus.total_keys || 0">0</div>
+                        <div class="text-sm text-gray-500">总计</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Provider Groups Status -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">提供商分组状态</h2>
+                <div class="flex space-x-2">
+                    <button @click="openCreateGroupModal()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200 flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                        </svg>
+                        添加分组
+                    </button>
+                    <button @click="refreshProviderHealth()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                        刷新健康状态
+                    </button>
+                </div>
+            </div>
+
+            <!-- 密钥状态图例 -->
+            <div class="mb-4 p-3 bg-gray-50 rounded-lg">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-700">密钥状态图例：</span>
+                    <div class="flex items-center space-x-6">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                            <span class="text-xs text-gray-600">有效</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <div class="w-2 h-2 bg-red-500 rounded-full"></div>
+                            <span class="text-xs text-gray-600">无效</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
+                            <span class="text-xs text-gray-600">未检测</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 搜索和筛选 -->
+            <div class="mb-6 flex flex-col sm:flex-row gap-4">
+                <div class="flex-1">
+                    <div class="relative">
+                        <input type="text" x-model="providerSearchQuery" @input="filterProviders()" placeholder="搜索分组名称或提供商类型..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <svg class="absolute left-3 top-2.5 h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+                <div class="flex space-x-2">
+                    <select x-model="providerStatusFilter" @change="filterProviders()" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">所有状态</option>
+                        <option value="healthy">健康</option>
+                        <option value="unhealthy">异常</option>
+                    </select>
+                    <select x-model="providerTypeFilter" @change="filterProviders()" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">所有类型</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="azure_openai">Azure OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="gemini">Google Gemini</option>
+                        <option value="openrouter">OpenRouter</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 提供商列表 -->
+            <div class="space-y-4">
+                <template x-for="(provider, groupId) in paginatedProviders" :key="groupId">
+                    <div class="border rounded-lg p-4 hover:shadow-md transition-shadow" :class="provider.healthy ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'">
+                        <div class="flex items-center justify-between">
+                            <!-- 左侧信息 -->
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center">
+                                    <div class="w-3 h-3 rounded-full mr-2" :class="provider.healthy ? 'bg-green-500' : 'bg-red-500'"></div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-900" x-text="provider.group_name"></h3>
+                                        <p class="text-sm text-gray-500" x-text="groupId"></p>
+                                    </div>
+                                </div>
+
+                                <span class="text-xs px-2 py-1 rounded-full" :class="getProviderTypeClass(provider.provider_type)" x-text="provider.provider_type.toUpperCase()"></span>
+
+                                <!-- 状态信息 -->
+                                <div class="flex items-center space-x-4 text-sm">
+                                    <div class="flex items-center space-x-1">
+                                        <span class="text-gray-600">健康:</span>
+                                        <span :class="provider.healthy ? 'text-green-600' : 'text-red-600'" x-text="provider.healthy ? '健康' : '异常'"></span>
+                                    </div>
+                                    <div class="flex items-center space-x-1">
+                                        <span class="text-gray-600">状态:</span>
+                                        <span :class="provider.enabled !== false ? 'text-green-600' : 'text-gray-500'" x-text="provider.enabled !== false ? '启用' : '禁用'"></span>
+                                    </div>
+                                    <div class="flex items-center space-x-1">
+                                        <span class="text-gray-600">密钥:</span>
+                                        <div class="flex items-center space-x-2" x-data="{ keyData: getKeyStatusData(groupId, provider) }">
+                                            <!-- 总计 -->
+                                            <span class="text-gray-900 font-medium" x-text="keyData.total"></span>
+
+                                            <!-- 有效密钥 -->
+                                            <div class="flex items-center space-x-1">
+                                                <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                                                <span class="text-green-600 text-xs font-medium" x-text="keyData.valid"></span>
+                                            </div>
+
+                                            <!-- 无效密钥 -->
+                                            <div class="flex items-center space-x-1" x-show="keyData.invalid > 0">
+                                                <div class="w-2 h-2 bg-red-500 rounded-full"></div>
+                                                <span class="text-red-600 text-xs font-medium" x-text="keyData.invalid"></span>
+                                            </div>
+
+                                            <!-- 未检测 -->
+                                            <div class="flex items-center space-x-1" x-show="keyData.unknown > 0">
+                                                <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
+                                                <span class="text-gray-500 text-xs font-medium" x-text="keyData.unknown"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-1">
+                                        <span class="text-gray-600">响应:</span>
+                                        <span class="text-gray-900" x-text="formatResponseTime(provider.response_time)"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 右侧操作 -->
+                            <div class="flex items-center space-x-2">
+                                <button @click="validateGroupKeys(groupId, provider)" :disabled="validatingGroups[groupId]" class="inline-flex items-center px-3 py-1 border border-purple-300 text-sm font-medium rounded text-purple-700 bg-purple-50 hover:bg-purple-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 transition-colors">
+                                    <svg x-show="!validatingGroups[groupId]" class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    <svg x-show="validatingGroups[groupId]" class="animate-spin w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span x-show="!validatingGroups[groupId]">检测</span>
+                                    <span x-show="validatingGroups[groupId]">检测中</span>
+                                </button>
+                                <button @click="editGroup(groupId, provider)" class="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                    </svg>
+                                    编辑
+                                </button>
+                                <button @click="toggleGroup(groupId, provider)" class="inline-flex items-center px-3 py-1 text-sm font-medium rounded" :class="provider.enabled !== false ? 'bg-yellow-500 hover:bg-yellow-600 text-white' : 'bg-green-500 hover:bg-green-600 text-white'">
+                                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path x-show="provider.enabled !== false" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        <path x-show="provider.enabled === false" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    <span x-text="provider.enabled !== false ? '禁用' : '启用'"></span>
+                                </button>
+                                <button @click="deleteGroup(groupId, provider)" class="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
+                                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                    删除
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 错误信息 -->
+                        <div x-show="provider.last_error" class="mt-3 p-2 bg-red-100 border border-red-200 rounded text-sm text-red-700">
+                            <strong>错误:</strong> <span x-text="provider.last_error"></span>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- 空状态 -->
+                <div x-show="Object.keys(filteredProviders).length === 0" class="text-center py-8">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 12h6m-6-4h6m2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <h3 class="mt-2 text-sm font-medium text-gray-900">没有找到匹配的提供商</h3>
+                    <p class="mt-1 text-sm text-gray-500">尝试调整搜索条件或筛选器</p>
+                </div>
+            </div>
+
+            <!-- 分页控制 -->
+            <div x-show="totalProviderPages > 1" class="mt-6 flex items-center justify-between">
+                <div class="text-sm text-gray-700">
+                    显示 <span x-text="providerPageOffset + 1"></span>-<span x-text="Math.min(providerPageOffset + providersPerPage, Object.keys(filteredProviders).length)"></span>
+                    共 <span x-text="Object.keys(filteredProviders).length"></span> 个分组
+                </div>
+                <div class="flex space-x-1">
+                    <button @click="providerPage = Math.max(1, providerPage - 1)" :disabled="providerPage <= 1" class="px-3 py-2 text-sm border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50">
+                        上一页
+                    </button>
+                    <span class="px-3 py-2 text-sm border-t border-b" x-text="providerPage + ' / ' + totalProviderPages"></span>
+                    <button @click="providerPage = Math.min(totalProviderPages, providerPage + 1)" :disabled="providerPage >= totalProviderPages" class="px-3 py-2 text-sm border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50">
+                        下一页
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Provider Models -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">支持的模型</h2>
+                <div class="flex space-x-2">
+                    <select x-model="selectedProvider" @change="loadProviderModels()" class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">所有提供商</option>
+                        <template x-for="(provider, groupId) in providerStatuses" :key="groupId">
+                            <option :value="groupId" x-text="provider.group_name"></option>
+                        </template>
+                    </select>
+                    <button @click="loadProviderModels()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                        加载模型
+                    </button>
+                </div>
+            </div>
+
+            <div x-show="loadingModels" class="text-center py-8">
+                <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <p class="mt-2 text-gray-600">加载模型中...</p>
+            </div>
+
+            <div x-show="!loadingModels && Object.keys(providerModels).length > 0" class="space-y-4">
+                <template x-for="(models, groupId) in providerModels" :key="groupId">
+                    <div class="border rounded-lg p-4">
+                        <h3 class="font-semibold text-gray-900 mb-3" x-text="models.group_name + ' (' + models.provider_type + ')'"></h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                            <template x-for="model in (models.models && models.models.data ? models.models.data : [])" :key="model.id">
+                                <div class="bg-gray-100 px-3 py-2 rounded text-sm">
+                                    <span class="font-mono" x-text="model.id"></span>
+                                    <span x-show="model.owned_by" class="text-gray-500 ml-2" x-text="'(' + model.owned_by + ')'"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <div x-show="!loadingModels && Object.keys(providerModels).length === 0" class="text-center py-8 text-gray-500">
+                <p>暂无模型数据，请选择提供商并点击加载模型</p>
+            </div>
+        </div>
+
+        <!-- Real-time Updates -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-bold mb-6">实时监控</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h3 class="text-lg font-medium mb-4">监控设置</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span>自动刷新:</span>
+                            <button @click="toggleAutoRefresh()" class="px-3 py-1 rounded text-sm" :class="autoRefresh ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'" x-text="autoRefresh ? '已开启' : '已关闭'"></button>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span>刷新间隔:</span>
+                            <select x-model="refreshInterval" @change="updateRefreshInterval()" class="px-2 py-1 border border-gray-300 rounded text-sm">
+                                <option value="30000">30秒</option>
+                                <option value="60000">1分钟</option>
+                                <option value="300000">5分钟</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span>最后更新:</span>
+                            <span class="text-sm text-gray-500" x-text="formatDate(lastUpdate)"></span>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-lg font-medium mb-4">快速操作</h3>
+                    <div class="space-y-2">
+                        <button @click="refreshData()" class="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                            刷新所有数据
+                        </button>
+                        <button @click="showProxyKeyModal = true" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                            代理密钥管理
+                        </button>
+                        <button @click="exportHealthReport()" class="w-full bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                            导出健康报告
+                        </button>
+                        <button @click="viewSystemLogs()" class="w-full bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                            查看系统日志
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Group Management Modal -->
+        <div x-show="showCreateGroupModal || showEditGroupModal" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" @click.self="closeGroupModal()"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100"
+             x-transition:leave="transition ease-in duration-200"
+             x-transition:leave-start="opacity-100"
+             x-transition:leave-end="opacity-0">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+                <!-- 头部 -->
+                <div class="flex justify-between items-center p-6 border-b border-gray-200">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                            <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-900" x-text="showCreateGroupModal ? '添加提供商分组' : '编辑提供商分组'"></h3>
+                            <p class="text-sm text-gray-500" x-text="showCreateGroupModal ? '配置新的API提供商分组' : '修改现有提供商分组配置'"></p>
+                        </div>
+                    </div>
+                    <button @click="closeGroupModal()" class="text-gray-400 hover:text-gray-600 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- 内容区域 -->
+                <div class="flex-1 overflow-y-auto p-6">
+                    <form id="groupForm" @submit.prevent="submitGroupForm()" class="space-y-8">
+                        <!-- 基本信息区域 -->
+                        <div class="bg-gray-50 rounded-lg p-6">
+                            <div class="flex items-center space-x-2 mb-4">
+                                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <h4 class="text-lg font-semibold text-gray-900">基本信息</h4>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">分组ID *</label>
+                                    <input type="text" x-model="groupFormData.group_id" :disabled="showEditGroupModal" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required placeholder="如: openai-group">
+                                    <p class="text-xs text-gray-500 mt-1">唯一标识符，创建后不可修改</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">分组名称 *</label>
+                                    <input type="text" x-model="groupFormData.name" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required placeholder="如: OpenAI 官方">
+                                    <p class="text-xs text-gray-500 mt-1">用于显示的友好名称</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 提供商配置区域 -->
+                        <div class="bg-gray-50 rounded-lg p-6">
+                            <div class="flex items-center space-x-2 mb-4">
+                                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <h4 class="text-lg font-semibold text-gray-900">提供商配置</h4>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">提供商类型 *</label>
+                                    <select x-model="groupFormData.provider_type" @change="onProviderTypeChange()" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required>
+                                        <option value="">请选择提供商类型</option>
+                                        <option value="openai">OpenAI</option>
+                                        <option value="azure_openai">Azure OpenAI</option>
+                                        <option value="anthropic">Anthropic</option>
+                                        <option value="gemini">Google Gemini</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                    </select>
+                                    <p class="text-xs text-gray-500 mt-1">选择API提供商类型</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Base URL *</label>
+                                    <input type="url" x-model="groupFormData.base_url" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required placeholder="如: https://api.openai.com/v1">
+                                    <p class="text-xs text-gray-500 mt-1">API服务的基础URL地址</p>
+                                </div>
+
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">启用状态</label>
+                                    <label class="flex items-center space-x-2 cursor-pointer">
+                                        <input type="checkbox" x-model="groupFormData.enabled" class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                                        <span class="text-sm text-gray-700">启用此分组</span>
+                                    </label>
+                                    <p class="text-xs text-gray-500 mt-1">禁用后该分组将不会处理请求</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 配置参数区域 -->
+                        <div class="bg-gray-50 rounded-lg p-6">
+                            <div class="flex items-center space-x-2 mb-4">
+                                <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4"></path>
+                                </svg>
+                                <h4 class="text-lg font-semibold text-gray-900">配置参数</h4>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">超时时间（秒）</label>
+                                    <input type="number" x-model="groupFormData.timeout" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" min="1" max="600" placeholder="30">
+                                    <p class="text-xs text-gray-500 mt-1">请求超时时间，建议30-120秒</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">最大重试次数</label>
+                                    <input type="number" x-model="groupFormData.max_retries" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" min="0" max="10" placeholder="3">
+                                    <p class="text-xs text-gray-500 mt-1">失败后的重试次数，建议1-5次</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">轮换策略</label>
+                                    <select x-model="groupFormData.rotation_strategy" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <option value="round_robin">轮询 (Round Robin)</option>
+                                        <option value="random">随机 (Random)</option>
+                                        <option value="least_used">最少使用 (Least Used)</option>
+                                    </select>
+                                    <p class="text-xs text-gray-500 mt-1">多个密钥时的选择策略</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- API密钥区域 -->
+                        <div class="bg-gray-50 rounded-lg p-6">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="flex items-center space-x-2">
+                                    <svg class="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9a2 2 0 012-2m0 0V7a2 2 0 012-2h4zm-6 2v6h4V9H9z"></path>
+                                    </svg>
+                                    <h4 class="text-lg font-semibold text-gray-900">API密钥管理</h4>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" @click="showBatchAddModal = true" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                        </svg>
+                                        批量添加
+                                    </button>
+                                    <button type="button" @click="addGroupApiKey()" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                        </svg>
+                                        添加密钥
+                                    </button>
+                                    <button type="button" @click="validateKeys()" :disabled="validatingKeys || groupFormData.api_keys.filter(k => k.trim()).length === 0" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                        <span x-show="!validatingKeys">验证密钥</span>
+                                        <span x-show="validatingKeys">验证中...</span>
+                                    </button>
+                                    <button type="button" @click="deleteInvalidKeys()" x-show="getInvalidKeyCount() > 0" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                        删除失效密钥 (<span x-text="getInvalidKeyCount()"></span>)
+                                    </button>
+                                    <button type="button" @click="deleteSelectedKeys()" x-show="selectedKeys.length > 0" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                        删除选中 (<span x-text="selectedKeys.length"></span>)
+                                    </button>
+
+                                </div>
+                            </div>
+
+                            <!-- 密钥列表 -->
+                            <div class="border rounded-md max-h-60 overflow-y-auto">
+                                <div class="space-y-1 p-2">
+                                    <template x-for="(key, index) in paginatedKeys" :key="index + keyPageOffset">
+                                        <div class="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded" :class="getKeyValidationClass(index + keyPageOffset)">
+                                            <input type="checkbox" :value="index + keyPageOffset" x-model="selectedKeys" class="rounded">
+                                            <div class="flex-1 relative">
+                                                <input type="text" x-model="groupFormData.api_keys[index + keyPageOffset]" class="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" placeholder="输入API密钥">
+                                                <!-- 验证状态指示器 -->
+                                                <div class="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-1">
+                                                    <!-- 有效状态 -->
+                                                    <div x-show="keyValidationStatus[index + keyPageOffset] === 'valid'" class="flex items-center" title="密钥有效">
+                                                        <svg class="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                                                        </svg>
+                                                    </div>
+                                                    <!-- 无效状态 -->
+                                                    <div x-show="keyValidationStatus[index + keyPageOffset] === 'invalid'" class="flex items-center" title="密钥无效">
+                                                        <svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                                                        </svg>
+                                                    </div>
+                                                    <!-- 验证中状态 -->
+                                                    <div x-show="keyValidationStatus[index + keyPageOffset] === 'validating'" class="flex items-center" title="验证中">
+                                                        <svg class="w-4 h-4 text-yellow-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                        </svg>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <button type="button" @click="removeGroupApiKey(index + keyPageOffset)" class="text-red-500 hover:text-red-700 p-1">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- 分页控制 -->
+                                <div x-show="groupFormData.api_keys.length > keysPerPage" class="border-t p-2 flex justify-between items-center bg-gray-50">
+                                    <div class="text-sm text-gray-600">
+                                        显示 <span x-text="keyPageOffset + 1"></span>-<span x-text="Math.min(keyPageOffset + keysPerPage, groupFormData.api_keys.length)"></span>
+                                        共 <span x-text="groupFormData.api_keys.length"></span> 个密钥
+                                    </div>
+                                    <div class="flex space-x-1">
+                                        <button type="button" @click="keyPage = Math.max(1, keyPage - 1)" :disabled="keyPage <= 1" class="px-2 py-1 text-sm border rounded disabled:opacity-50">
+                                            上一页
+                                        </button>
+                                        <button type="button" @click="keyPage = Math.min(totalKeyPages, keyPage + 1)" :disabled="keyPage >= totalKeyPages" class="px-2 py-1 text-sm border rounded disabled:opacity-50">
+                                            下一页
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 支持的模型 -->
+                        <div class="md:col-span-2 mt-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-semibold">支持的模型（可选）</h4>
+                                <div class="flex space-x-2">
+                                    <button type="button" @click="loadAvailableModels()" :disabled="!groupFormData.provider_type || !groupFormData.base_url || groupFormData.api_keys.filter(k => k.trim()).length === 0" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm disabled:opacity-50">
+                                        <span x-show="!loadingModels">加载模型</span>
+                                        <span x-show="loadingModels">加载中...</span>
+                                    </button>
+                                    <button type="button" @click="selectAllModels()" x-show="availableModels.length > 0" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm">
+                                        全选
+                                    </button>
+                                    <button type="button" @click="clearAllModels()" x-show="groupFormData.models.length > 0" class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">
+                                        清空
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- 模型选择器 -->
+                            <div x-show="availableModels.length > 0" class="border rounded-md p-3 bg-gray-50 mb-3">
+                                <div class="flex justify-between items-center mb-2">
+                                    <div class="text-sm text-gray-600">从API加载的可用模型：</div>
+                                    <div class="text-xs text-gray-500">
+                                        显示 <span x-text="filteredModels.length"></span> / <span x-text="availableModels.length"></span> 个模型
+                                    </div>
+                                </div>
+
+                                <!-- 搜索框 -->
+                                <div class="mb-3">
+                                    <div class="relative">
+                                        <input type="text" x-model="modelSearchQuery" @input="filterModels()" placeholder="搜索模型名称..." class="w-full px-3 py-2 pl-8 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                        <svg class="absolute left-2 top-2.5 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                        </svg>
+                                        <button x-show="modelSearchQuery" @click="clearModelSearch()" class="absolute right-2 top-2 text-gray-400 hover:text-gray-600">
+                                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- 模型列表 -->
+                                <div class="max-h-40 overflow-y-auto space-y-1">
+                                    <template x-for="model in filteredModels" :key="model.id">
+                                        <label class="flex items-center space-x-2 text-sm hover:bg-white p-1 rounded">
+                                            <input type="checkbox" :value="model.id" x-model="groupFormData.models" class="rounded">
+                                            <span class="font-mono" x-text="model.id"></span>
+                                            <span x-show="model.owned_by" class="text-gray-500" x-text="'(' + model.owned_by + ')'"></span>
+                                        </label>
+                                    </template>
+                                    <div x-show="filteredModels.length === 0 && modelSearchQuery" class="text-center py-4 text-gray-500 text-sm">
+                                        未找到匹配的模型
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 手动输入模型 -->
+                            <div>
+                                <div class="text-sm text-gray-600 mb-2">或手动输入模型名称：</div>
+                                <textarea x-model="modelsText" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" rows="3" placeholder="每行一个模型名称，留空表示支持所有模型"></textarea>
+                                <p class="text-sm text-gray-500 mt-1">每行输入一个模型名称，如：gpt-3.5-turbo</p>
+                            </div>
+
+                            <!-- 已选择的模型预览 -->
+                            <div x-show="groupFormData.models.length > 0" class="mt-3">
+                                <div class="text-sm text-gray-600 mb-2">已选择的模型 (<span x-text="groupFormData.models.length"></span>)：</div>
+                                <div class="flex flex-wrap gap-1">
+                                    <template x-for="model in groupFormData.models" :key="model">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
+                                            <span x-text="model"></span>
+                                            <button type="button" @click="removeModel(model)" class="ml-1 text-blue-600 hover:text-blue-800">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                                </svg>
+                                            </button>
+                                        </span>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- 底部操作 -->
+                <div class="border-t border-gray-200 px-6 py-4 bg-gray-50 rounded-b-lg">
+                    <div class="flex justify-between items-center">
+                        <div class="text-sm text-gray-500">
+                            <span x-show="showCreateGroupModal">填写完整信息后点击创建</span>
+                            <span x-show="showEditGroupModal">修改完成后点击更新保存</span>
+                        </div>
+                        <div class="flex space-x-3">
+                            <button type="button" @click="closeGroupModal()" class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                                取消
+                            </button>
+                            <button type="submit" form="groupForm" :disabled="submittingGroup" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                <svg x-show="submittingGroup" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span x-show="!submittingGroup" x-text="showCreateGroupModal ? '创建分组' : '更新分组'"></span>
+                                <span x-show="submittingGroup">处理中...</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Batch Add Keys Modal -->
+        <div x-show="showBatchAddModal" x-cloak
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100"
+             x-transition:leave="transition ease-in duration-200"
+             x-transition:leave-start="opacity-100"
+             x-transition:leave-end="opacity-0"
+             class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+             @click.self="showBatchAddModal = false">
+            <div class="bg-white rounded-lg p-6 w-full max-w-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">批量添加API密钥</h3>
+                    <button @click="showBatchAddModal = false" class="text-gray-500 hover:text-gray-700">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">API密钥列表</label>
+                    <textarea x-model="batchKeysText" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" rows="8" placeholder="每行输入一个API密钥&#10;支持以下格式：&#10;sk-1234567890abcdef&#10;your-api-key-here&#10;&#10;空行将被忽略"></textarea>
+                    <p class="text-sm text-gray-500 mt-1">每行输入一个API密钥，空行将被自动忽略</p>
+                </div>
+
+                <div class="flex justify-end space-x-4">
+                    <button type="button" @click="showBatchAddModal = false" class="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50">
+                        取消
+                    </button>
+                    <button type="button" @click="addBatchKeys()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md">
+                        添加密钥
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Proxy Key Management Modal -->
+        <div x-show="showProxyKeyModal" x-cloak class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" @click.self="showProxyKeyModal = false"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100"
+             x-transition:leave="transition ease-in duration-200"
+             x-transition:leave-start="opacity-100"
+             x-transition:leave-end="opacity-0">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
+                <!-- 头部 -->
+                <div class="flex justify-between items-center p-6 border-b border-gray-200">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center">
+                            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9a2 2 0 012-2m0 0a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-900">代理服务 API 密钥</h3>
+                            <p class="text-sm text-gray-500">管理用于访问代理服务的API密钥</p>
+                        </div>
+                    </div>
+                    <button @click="showProxyKeyModal = false" class="text-gray-400 hover:text-gray-600 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- 内容 -->
+                <div class="flex-1 overflow-y-auto p-6">
+                    <!-- 操作栏 -->
+                    <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <!-- 生成新密钥按钮 -->
+                        <button @click="showGenerateProxyKeyForm = true" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                            </svg>
+                            生成新密钥
+                        </button>
+
+                        <!-- 搜索框和页面大小选择 -->
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <!-- 搜索框 -->
+                            <div class="relative">
+                                <input type="text"
+                                       x-model="proxyKeySearch"
+                                       @input="searchProxyKeys()"
+                                       @keyup.enter="searchProxyKeys()"
+                                       placeholder="搜索密钥名称、描述或密钥..."
+                                       class="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                                    </svg>
+                                </div>
+                                <button x-show="proxyKeySearch"
+                                        @click="clearProxyKeySearch()"
+                                        class="absolute inset-y-0 right-0 pr-3 flex items-center">
+                                    <svg class="h-4 w-4 text-gray-400 hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <!-- 页面大小选择 -->
+                            <select x-model="proxyKeyPageSize"
+                                    @change="changeProxyKeyPageSize()"
+                                    class="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="5">5条/页</option>
+                                <option value="10">10条/页</option>
+                                <option value="20">20条/页</option>
+                                <option value="50">50条/页</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 生成密钥表单 -->
+                    <div x-show="showGenerateProxyKeyForm" x-cloak class="mb-6 p-4 bg-gray-50 rounded-lg">
+                        <h4 class="text-lg font-medium mb-4">生成新的代理密钥</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">密钥名称</label>
+                                <input type="text" x-model="newProxyKey.name" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="输入密钥名称">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                                <input type="text" x-model="newProxyKey.description" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="输入描述信息">
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">允许访问的分组</label>
+                            <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                <template x-for="(provider, groupId) in providerStatuses" :key="groupId">
+                                    <label class="flex items-center space-x-2">
+                                        <input type="checkbox"
+                                               :value="groupId"
+                                               :checked="newProxyKey.allowedGroups.includes(groupId)"
+                                               @change="toggleProxyKeyGroup(groupId, $event.target.checked)"
+                                               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        <span class="text-sm" x-text="provider.group_name"></span>
+                                    </label>
+                                </template>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">不选择任何分组表示可以访问所有分组</p>
+                        </div>
+                        <div class="mt-4 flex space-x-2">
+                            <button @click="generateProxyKey()" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-md">
+                                生成密钥
+                            </button>
+                            <button @click="showGenerateProxyKeyForm = false; resetProxyKeyForm()" class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-md">
+                                取消
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 密钥列表 -->
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">密钥</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名称</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">使用次数</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">创建时间</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <template x-for="key in proxyKeys" :key="key.id">
+                                    <tr>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <code class="text-sm font-mono bg-gray-100 px-2 py-1 rounded" x-text="key.key.substring(0, 20) + '...'"></code>
+                                                <button @click="copyToClipboard(key.key)" class="ml-2 text-gray-400 hover:text-gray-600">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                            <div class="mt-1">
+                                                <template x-if="key.allowed_groups && key.allowed_groups.length > 0">
+                                                    <div class="flex flex-wrap gap-1">
+                                                        <template x-for="groupId in key.allowed_groups" :key="groupId">
+                                                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800" x-text="getGroupName(groupId)"></span>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                                <template x-if="!key.allowed_groups || key.allowed_groups.length === 0">
+                                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">所有分组</span>
+                                                </template>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="text-sm font-medium text-gray-900" x-text="key.name"></div>
+                                            <div class="text-sm text-gray-500" x-text="key.description"></div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="key.usage_count || 0"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(key.created_at)"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                            <button @click="deleteProxyKey(key.id)" class="text-red-600 hover:text-red-900">删除</button>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-if="proxyKeys.length === 0">
+                                    <tr>
+                                        <td colspan="5" class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
+                                            <template x-if="proxyKeySearch.trim()">
+                                                <span>未找到匹配的代理密钥</span>
+                                            </template>
+                                            <template x-if="!proxyKeySearch.trim()">
+                                                <span>暂无代理密钥</span>
+                                            </template>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 分页控件 -->
+                    <div x-show="proxyKeyPagination.total > 0" class="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <!-- 分页信息 -->
+                        <div class="text-sm text-gray-700">
+                            显示第 <span class="font-medium" x-text="((proxyKeyPagination.page - 1) * proxyKeyPagination.page_size + 1)"></span>
+                            到 <span class="font-medium" x-text="Math.min(proxyKeyPagination.page * proxyKeyPagination.page_size, proxyKeyPagination.total)"></span>
+                            条，共 <span class="font-medium" x-text="proxyKeyPagination.total"></span> 条记录
+                        </div>
+
+                        <!-- 分页按钮 -->
+                        <div class="flex items-center space-x-2">
+                            <!-- 上一页 -->
+                            <button @click="goToProxyKeyPage(proxyKeyPagination.page - 1)"
+                                    :disabled="!proxyKeyPagination.has_prev"
+                                    :class="proxyKeyPagination.has_prev ? 'text-gray-500 hover:text-gray-700' : 'text-gray-300 cursor-not-allowed'"
+                                    class="px-3 py-2 text-sm font-medium border border-gray-300 rounded-md">
+                                上一页
+                            </button>
+
+                            <!-- 页码 -->
+                            <template x-for="page in Array.from({length: Math.min(5, proxyKeyPagination.total_pages)}, (_, i) => {
+                                const start = Math.max(1, proxyKeyPagination.page - 2);
+                                const end = Math.min(proxyKeyPagination.total_pages, start + 4);
+                                const adjustedStart = Math.max(1, end - 4);
+                                return adjustedStart + i;
+                            }).filter(p => p <= proxyKeyPagination.total_pages)" :key="page">
+                                <button @click="goToProxyKeyPage(page)"
+                                        :class="page === proxyKeyPagination.page ? 'bg-indigo-500 text-white' : 'text-gray-500 hover:text-gray-700'"
+                                        class="px-3 py-2 text-sm font-medium border border-gray-300 rounded-md">
+                                    <span x-text="page"></span>
+                                </button>
+                            </template>
+
+                            <!-- 下一页 -->
+                            <button @click="goToProxyKeyPage(proxyKeyPagination.page + 1)"
+                                    :disabled="!proxyKeyPagination.has_next"
+                                    :class="proxyKeyPagination.has_next ? 'text-gray-500 hover:text-gray-700' : 'text-gray-300 cursor-not-allowed'"
+                                    class="px-3 py-2 text-sm font-medium border border-gray-300 rounded-md">
+                                下一页
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Success/Error Messages -->
+        <div x-show="message" x-cloak x-transition class="fixed top-4 right-4 z-50">
+            <div class="px-4 py-2 rounded-md text-white" :class="messageType === 'success' ? 'bg-green-500' : 'bg-red-500'">
+                <span x-text="message"></span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function multiProviderDashboard() {
+            return {
+                systemHealth: {
+                    status: 'healthy',
+                    total_groups: 0,
+                    healthy_groups: 0,
+                    total_keys: 0,
+                    active_keys: 0,
+                    uptime: 0
+                },
+                providerStatuses: {},
+                providerModels: {},
+                selectedProvider: '',
+                loadingModels: false,
+                autoRefresh: false,
+                refreshInterval: 60000,
+                lastUpdate: new Date(),
+                refreshTimer: null,
+
+                // 密钥状态相关
+                keyStatus: {
+                    total_keys: 0,
+                    total_valid: 0,
+                    total_invalid: 0,
+                    last_updated: null,
+                    groups: {}
+                },
+
+                // 代理密钥管理相关
+                showProxyKeyModal: false,
+                showGenerateProxyKeyForm: false,
+                proxyKeys: [],
+                newProxyKey: {
+                    name: '',
+                    description: '',
+                    allowedGroups: []
+                },
+                // 代理密钥分页和搜索
+                proxyKeySearch: '',
+                proxyKeyPage: 1,
+                proxyKeyPageSize: 10,
+                proxyKeyPagination: {
+                    page: 1,
+                    page_size: 10,
+                    total: 0,
+                    total_pages: 0,
+                    has_prev: false,
+                    has_next: false
+                },
+                loadingKeyStatus: false,
+                loadingValidation: false,
+                loadingSystemHealth: false,
+                loadingProviderStatuses: false,
+                keyStatusTimer: null,
+
+                // 提供商筛选和分页
+                providerSearchQuery: '',
+                providerStatusFilter: '',
+                providerTypeFilter: '',
+                filteredProviders: [],
+                providerPage: 1,
+                providersPerPage: 5,
+                validatingAllKeys: false,
+                validatingGroups: {}, // 跟踪每个分组的验证状态
+
+                // 分组管理相关
+                showCreateGroupModal: false,
+                showEditGroupModal: false,
+                showBatchAddModal: false,
+                submittingGroup: false,
+                editingGroupId: '',
+                message: '',
+                messageType: 'success',
+
+                // 密钥分页相关
+                selectedKeys: [],
+                keyPage: 1,
+                keysPerPage: 5,
+                batchKeysText: '',
+
+                // 密钥验证相关
+                validatingKeys: false,
+                keyValidationStatus: {}, // 存储每个密钥的验证状态
+                invalidKeyIndexes: [], // 存储无效密钥的索引
+
+                // 模型相关
+                availableModels: [],
+                filteredModels: [],
+                loadingModels: false,
+                modelSearchQuery: '',
+
+                groupFormData: {
+                    group_id: '',
+                    name: '',
+                    provider_type: '',
+                    base_url: '',
+                    enabled: true,
+                    timeout: 30,
+                    max_retries: 3,
+                    rotation_strategy: 'round_robin',
+                    api_keys: [''],
+                    models: []
+                },
+                modelsText: '',
+
+                // 计算属性
+                get providerPageOffset() {
+                    return (this.providerPage - 1) * this.providersPerPage;
+                },
+
+                get paginatedProviders() {
+                    const start = this.providerPageOffset;
+                    const end = start + this.providersPerPage;
+                    const providersArray = Object.entries(this.filteredProviders);
+                    return providersArray.slice(start, end).reduce((acc, [groupId, provider]) => {
+                        acc[groupId] = provider;
+                        return acc;
+                    }, {});
+                },
+
+                get totalProviderPages() {
+                    return Math.ceil(Object.keys(this.filteredProviders).length / this.providersPerPage);
+                },
+
+                // 分组管理计算属性
+                get keyPageOffset() {
+                    return (this.keyPage - 1) * this.keysPerPage;
+                },
+
+                get paginatedKeys() {
+                    const start = this.keyPageOffset;
+                    const end = start + this.keysPerPage;
+                    return this.groupFormData.api_keys.slice(start, end);
+                },
+
+                get totalKeyPages() {
+                    return Math.ceil(this.groupFormData.api_keys.length / this.keysPerPage);
+                },
+
+                // 系统状态计算属性
+                get averageResponseTime() {
+                    const providers = Object.values(this.providerStatuses);
+                    if (providers.length === 0) return 0;
+
+                    const totalTime = providers.reduce((sum, provider) => {
+                        return sum + (provider.response_time || 0);
+                    }, 0);
+
+                    return totalTime / providers.length;
+                },
+
+
+
+                async init() {
+                    // 系统健康状态和提供商分组状态需要默认展示
+                    await this.loadSystemHealth();
+                    await this.loadProviderStatuses();
+                    await this.loadProxyKeys();
+
+                    // 移除自动加载验证状态，改为手动触发
+                    // await this.loadPersistedValidationStatus();
+                    this.filterProviders();
+
+                    // 启动定时刷新系统健康状态（每30秒）
+                    this.startSystemHealthRefresh();
+                },
+
+                async loadSystemHealth() {
+                    this.loadingSystemHealth = true;
+                    try {
+                        const response = await fetch('/admin/health/system');
+                        if (response.ok) {
+                            this.systemHealth = await response.json();
+                            // this.showMessage('系统健康状态已更新', 'success');
+                        } else {
+                            throw new Error('获取系统健康状态失败');
+                        }
+                    } catch (error) {
+                        console.error('Failed to load system health:', error);
+                        this.showMessage('加载系统健康状态失败: ' + error.message, 'error');
+                    } finally {
+                        this.loadingSystemHealth = false;
+                    }
+                },
+
+                async loadProviderStatuses() {
+                    this.loadingProviderStatuses = true;
+                    try {
+                        const response = await fetch('/admin/groups');
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.providerStatuses = data.groups || {};
+                            this.filterProviders();
+                            // this.showMessage('提供商分组状态已更新', 'success');
+                        } else {
+                            throw new Error('获取提供商分组状态失败');
+                        }
+                    } catch (error) {
+                        console.error('Failed to load provider statuses:', error);
+                        this.showMessage('加载提供商分组状态失败: ' + error.message, 'error');
+                    } finally {
+                        this.loadingProviderStatuses = false;
+                    }
+                },
+
+                async refreshData() {
+                    await this.loadSystemHealth();
+                    await this.loadProviderStatuses();
+                    this.lastUpdate = new Date();
+                },
+
+                async refreshProviderHealth() {
+                    await this.loadProviderStatuses();
+                    this.lastUpdate = new Date();
+                },
+
+                async checkProviderHealth(groupId) {
+                    try {
+                        const response = await fetch(`/admin/health/providers/${groupId}`);
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.providerStatuses[groupId] = data;
+                        }
+                    } catch (error) {
+                        console.error('Failed to check provider health:', error);
+                    }
+                },
+
+                async loadProviderModels() {
+                    this.loadingModels = true;
+                    try {
+                        const url = this.selectedProvider
+                            ? `/admin/models/${this.selectedProvider}`
+                            : '/admin/models';
+
+                        const response = await fetch(url);
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.providerModels = data.data || {};
+                        }
+                    } catch (error) {
+                        console.error('Failed to load models:', error);
+                    } finally {
+                        this.loadingModels = false;
+                    }
+                },
+
+                toggleAutoRefresh() {
+                    this.autoRefresh = !this.autoRefresh;
+                    if (this.autoRefresh) {
+                        this.startAutoRefresh();
+                    } else {
+                        this.stopAutoRefresh();
+                    }
+                },
+
+                // 密钥状态相关方法
+                async loadKeyStatus() {
+                    this.loadingKeyStatus = true;
+                    try {
+                        const response = await fetch('/admin/keys/status');
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.success) {
+                                // 计算总计数据
+                                let totalKeys = 0;
+                                let totalValid = 0;
+                                let totalInvalid = 0;
+
+                                for (const groupId in data.data) {
+                                    const groupData = data.data[groupId];
+                                    totalKeys += groupData.total_keys;
+                                    totalValid += groupData.valid_keys;
+                                    totalInvalid += groupData.invalid_keys;
+                                }
+
+                                this.keyStatus = {
+                                    total_keys: totalKeys,
+                                    total_valid: totalValid,
+                                    total_invalid: totalInvalid,
+                                    last_updated: new Date().toLocaleString('zh-CN'),
+                                    groups: data.data
+                                };
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Failed to load key status:', error);
+                    } finally {
+                        this.loadingKeyStatus = false;
+                    }
+                },
+
+                async refreshKeyStatus() {
+                    await this.loadKeyStatus();
+                    // 移除自动加载验证状态，改为手动触发
+                    // await this.loadPersistedValidationStatus();
+                },
+
+                // 加载所有分组的持久化验证状态
+                async loadPersistedValidationStatus() {
+                    this.loadingValidation = true;
+                    try {
+                        // 获取所有分组ID
+                        const groupIds = Object.keys(this.providerStatuses || {});
+                        let processedGroups = 0;
+
+                        // 为每个分组加载验证状态
+                        for (const groupId of groupIds) {
+                            try {
+                                const response = await fetch(`/admin/keys/validation/${groupId}`);
+                                if (response.ok) {
+                                    const data = await response.json();
+                                    if (data.success && data.validation_status) {
+                                        // 统计验证状态
+                                        const validationStatus = data.validation_status;
+                                        let validCount = 0;
+                                        let invalidCount = 0;
+                                        let totalCount = 0;
+
+                                        for (const [apiKey, status] of Object.entries(validationStatus)) {
+                                            totalCount++;
+                                            if (status.is_valid === true) {
+                                                validCount++;
+                                            } else if (status.is_valid === false) {
+                                                invalidCount++;
+                                            }
+                                        }
+
+                                        // 更新密钥状态数据
+                                        if (!this.keyStatus.groups) {
+                                            this.keyStatus.groups = {};
+                                        }
+                                        this.keyStatus.groups[groupId] = {
+                                            valid_keys: validCount,
+                                            invalid_keys: invalidCount,
+                                            total_keys: totalCount,
+                                            last_validated: new Date().toISOString()
+                                        };
+                                    }
+                                }
+                                processedGroups++;
+                            } catch (error) {
+                                console.error(`Failed to load validation status for group ${groupId}:`, error);
+                                processedGroups++;
+                            }
+                        }
+
+                        // 重新计算总计数据
+                        if (this.keyStatus.groups) {
+                            let totalKeys = 0;
+                            let totalValid = 0;
+                            let totalInvalid = 0;
+
+                            for (const groupData of Object.values(this.keyStatus.groups)) {
+                                totalKeys += groupData.total_keys || 0;
+                                totalValid += groupData.valid_keys || 0;
+                                totalInvalid += groupData.invalid_keys || 0;
+                            }
+
+                            this.keyStatus.total_keys = totalKeys;
+                            this.keyStatus.total_valid = totalValid;
+                            this.keyStatus.total_invalid = totalInvalid;
+                            this.keyStatus.last_updated = new Date().toLocaleString();
+                        }
+
+                        // 显示完成消息
+                        this.showMessage(`已检查 ${processedGroups} 个分组的密钥验证状态`, 'success');
+                    } catch (error) {
+                        console.error('Failed to load persisted validation status:', error);
+                        this.showMessage('加载密钥验证状态失败: ' + error.message, 'error');
+                    } finally {
+                        this.loadingValidation = false;
+                    }
+                },
+
+
+
+                // 提供商筛选和管理方法
+                filterProviders() {
+                    let providers = Object.entries(this.providerStatuses);
+
+                    // 按创建时间倒序排序（后端已经排序，但为了确保一致性）
+                    providers.sort(([, a], [, b]) => {
+                        const aTime = a.created_at ? new Date(a.created_at) : new Date(0);
+                        const bTime = b.created_at ? new Date(b.created_at) : new Date(0);
+                        return bTime - aTime; // 倒序
+                    });
+
+                    // 搜索筛选
+                    if (this.providerSearchQuery.trim()) {
+                        const query = this.providerSearchQuery.toLowerCase();
+                        providers = providers.filter(([groupId, provider]) =>
+                            provider.group_name.toLowerCase().includes(query) ||
+                            provider.provider_type.toLowerCase().includes(query) ||
+                            groupId.toLowerCase().includes(query)
+                        );
+                    }
+
+                    // 状态筛选
+                    if (this.providerStatusFilter) {
+                        providers = providers.filter(([groupId, provider]) => {
+                            if (this.providerStatusFilter === 'healthy') {
+                                return provider.healthy;
+                            } else if (this.providerStatusFilter === 'unhealthy') {
+                                return !provider.healthy;
+                            }
+                            return true;
+                        });
+                    }
+
+                    // 类型筛选
+                    if (this.providerTypeFilter) {
+                        providers = providers.filter(([groupId, provider]) =>
+                            provider.provider_type === this.providerTypeFilter
+                        );
+                    }
+
+                    // 转换为对象格式，保持排序顺序
+                    this.filteredProviders = {};
+                    providers.forEach(([groupId, provider]) => {
+                        this.filteredProviders[groupId] = provider;
+                    });
+
+                    // 重置页码
+                    this.providerPage = 1;
+                },
+
+                async validateAllKeys() {
+                    this.validatingAllKeys = true;
+                    try {
+                        await this.loadKeyStatus();
+                        // 检查是否有失效密钥
+                        const hasInvalidKeys = this.keyStatus.total_invalid > 0;
+                        if (hasInvalidKeys) {
+                            // 如果有失效密钥，可以选择打开分组管理页面
+                            if (confirm(`发现 ${this.keyStatus.total_invalid} 个失效密钥，是否打开分组管理页面进行处理？`)) {
+                                window.open('/groups', '_blank');
+                            }
+                        } else {
+                            alert('所有密钥都是有效的！');
+                        }
+                    } catch (error) {
+                        console.error('Failed to validate keys:', error);
+                        alert('验证密钥时出错，请稍后重试');
+                    } finally {
+                        this.validatingAllKeys = false;
+                    }
+                },
+
+                // 验证单个分组的密钥
+                async validateGroupKeys(groupId, provider) {
+                    // 设置验证状态
+                    this.validatingGroups[groupId] = true;
+
+                    try {
+                        // 获取分组的完整数据
+                        const response = await fetch('/admin/groups/manage');
+                        if (!response.ok) {
+                            throw new Error('Failed to fetch group data');
+                        }
+
+                        const data = await response.json();
+                        const groupData = data.groups[groupId];
+
+                        if (!groupData || !groupData.api_keys || groupData.api_keys.length === 0) {
+                            alert('该分组没有配置API密钥');
+                            return;
+                        }
+
+                        // 过滤掉空密钥
+                        const validKeys = groupData.api_keys.filter(key => key && key.trim().length > 0);
+
+                        if (validKeys.length === 0) {
+                            alert('该分组没有有效的API密钥');
+                            return;
+                        }
+
+                        // 发送验证请求
+                        const validateResponse = await fetch(`/admin/keys/validate/${groupId}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                api_keys: validKeys
+                            })
+                        });
+
+                        if (!validateResponse.ok) {
+                            throw new Error('验证请求失败');
+                        }
+
+                        const result = await validateResponse.json();
+
+                        if (result.success) {
+                            const validCount = result.valid_keys || 0;
+                            const invalidCount = result.invalid_keys || 0;
+                            const totalCount = result.total_keys || 0;
+
+                            // 更新本地密钥状态数据
+                            if (!this.keyStatus.groups) {
+                                this.keyStatus.groups = {};
+                            }
+                            this.keyStatus.groups[groupId] = {
+                                valid_keys: validCount,
+                                invalid_keys: invalidCount,
+                                total_keys: totalCount,
+                                last_validated: new Date().toISOString()
+                            };
+
+                            // 显示结果
+                            const message = `分组 "${provider.group_name}" 密钥验证完成：\n\n` +
+                                          `✅ 有效密钥：${validCount}\n` +
+                                          `❌ 无效密钥：${invalidCount}\n` +
+                                          `📊 总计：${totalCount}\n\n` +
+                                          `验证结果已保存到密钥管理列表中`;
+
+                            alert(message);
+
+                            // 刷新提供商状态和密钥状态
+                            await this.loadProviderStatuses();
+                            await this.refreshKeyStatus();
+                        } else {
+                            throw new Error(result.message || '验证失败');
+                        }
+
+                    } catch (error) {
+                        console.error('验证分组密钥失败:', error);
+                        alert(`验证分组密钥失败：${error.message}`);
+                    } finally {
+                        // 清除验证状态
+                        this.validatingGroups[groupId] = false;
+                    }
+                },
+
+                showProviderDetails(groupId, provider) {
+                    const keyStatusData = this.keyStatus.groups[groupId];
+                    let detailsHtml = `
+                        <div class="space-y-4">
+                            <div>
+                                <h3 class="text-lg font-semibold">${provider.group_name} (${groupId})</h3>
+                                <p class="text-sm text-gray-600">${provider.provider_type.toUpperCase()}</p>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <span class="font-medium">状态:</span>
+                                    <span class="${provider.healthy ? 'text-green-600' : 'text-red-600'}">${provider.healthy ? '健康' : '异常'}</span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">响应时间:</span>
+                                    <span>${this.formatResponseTime(provider.response_time)}</span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">总密钥数:</span>
+                                    <span>${provider.total_keys}</span>
+                                </div>
+                                <div>
+                                    <span class="font-medium">活跃密钥:</span>
+                                    <span>${provider.active_keys}</span>
+                                </div>
+                            </div>
+                    `;
+
+                    if (keyStatusData) {
+                        detailsHtml += `
+                            <div class="border-t pt-4">
+                                <h4 class="font-medium mb-2">密钥验证状态:</h4>
+                                <div class="grid grid-cols-3 gap-4 text-sm">
+                                    <div class="text-center">
+                                        <div class="text-lg font-semibold text-green-600">${keyStatusData.valid_keys}</div>
+                                        <div class="text-gray-600">有效</div>
+                                    </div>
+                                    <div class="text-center">
+                                        <div class="text-lg font-semibold text-red-600">${keyStatusData.invalid_keys}</div>
+                                        <div class="text-gray-600">无效</div>
+                                    </div>
+                                    <div class="text-center">
+                                        <div class="text-lg font-semibold text-gray-600">${keyStatusData.total_keys}</div>
+                                        <div class="text-gray-600">总计</div>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-2">测试模型: ${keyStatusData.test_model}</p>
+                                <p class="text-xs text-gray-500">最后检查: ${keyStatusData.last_checked}</p>
+                            </div>
+                        `;
+                    }
+
+                    if (provider.last_error) {
+                        detailsHtml += `
+                            <div class="border-t pt-4">
+                                <h4 class="font-medium mb-2 text-red-600">错误信息:</h4>
+                                <p class="text-sm text-red-700 bg-red-50 p-2 rounded">${provider.last_error}</p>
+                            </div>
+                        `;
+                    }
+
+                    detailsHtml += '</div>';
+
+                    // 这里可以使用一个模态框来显示详情，暂时使用alert
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = detailsHtml;
+                    alert(`${provider.group_name} 详细信息\n\n状态: ${provider.healthy ? '健康' : '异常'}\n响应时间: ${this.formatResponseTime(provider.response_time)}\n密钥: ${provider.active_keys}/${provider.total_keys}\n最后检查: ${this.formatDate(provider.last_check)}`);
+                },
+
+                // 分组管理方法
+                openCreateGroupModal() {
+                    this.resetGroupForm();
+                    this.showCreateGroupModal = true;
+                },
+
+                async editGroup(groupId, provider) {
+                    this.editingGroupId = groupId;
+
+                    try {
+                        // 从分组管理接口获取完整的分组数据
+                        const response = await fetch('/admin/groups/manage');
+                        if (!response.ok) {
+                            throw new Error('Failed to fetch group data');
+                        }
+
+                        const data = await response.json();
+                        const fullGroupData = data.groups[groupId];
+
+                        if (!fullGroupData) {
+                            throw new Error('Group data not found');
+                        }
+
+                        // 确保API密钥数组至少有一个空元素
+                        let apiKeys = [''];
+                        if (fullGroupData.api_keys && Array.isArray(fullGroupData.api_keys) && fullGroupData.api_keys.length > 0) {
+                            apiKeys = [...fullGroupData.api_keys];
+                        }
+
+                        this.groupFormData = {
+                            group_id: groupId,
+                            name: fullGroupData.group_name || '',
+                            provider_type: fullGroupData.provider_type || '',
+                            base_url: fullGroupData.base_url || '',
+                            enabled: fullGroupData.enabled !== false,
+                            timeout: fullGroupData.timeout || 30,
+                            max_retries: fullGroupData.max_retries || 3,
+                            rotation_strategy: fullGroupData.rotation_strategy || 'round_robin',
+                            api_keys: apiKeys,
+                            models: fullGroupData.models || []
+                        };
+
+                        this.modelsText = (fullGroupData.models || []).join('\n');
+                        this.selectedKeys = [];
+                        this.keyPage = 1;
+                        this.availableModels = [];
+                        this.filteredModels = [];
+                        this.modelSearchQuery = '';
+                        this.keyValidationStatus = {};
+                        this.invalidKeyIndexes = [];
+                        this.showEditGroupModal = true;
+
+                        // 移除自动加载验证状态，改为手动触发
+                        // await this.loadKeyValidationStatus(groupId);
+
+                    } catch (error) {
+                        console.error('获取分组数据失败:', error);
+                        alert('获取分组数据失败，请稍后重试');
+                    }
+                },
+
+                async toggleGroup(groupId, provider) {
+                    try {
+                        const response = await fetch(`/admin/groups/${groupId}/toggle`, {
+                            method: 'POST'
+                        });
+
+                        const data = await response.json();
+
+                        if (response.ok) {
+                            this.showMessage(data.message, 'success');
+                            // 重新加载提供商状态以反映分组状态变化
+                            await this.loadProviderStatuses();
+                        } else {
+                            this.showMessage(data.message || '操作失败', 'error');
+                        }
+                    } catch (error) {
+                        this.showMessage('网络错误: ' + error.message, 'error');
+                    }
+                },
+
+                async deleteGroup(groupId, provider) {
+                    if (!confirm(`确定要删除分组 "${provider.group_name}" 吗？此操作不可恢复。`)) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`/admin/groups/${groupId}`, {
+                            method: 'DELETE'
+                        });
+
+                        const data = await response.json();
+
+                        if (response.ok) {
+                            this.showMessage(data.message, 'success');
+                            // 重新加载提供商状态以移除已删除的分组
+                            await this.loadProviderStatuses();
+                        } else {
+                            this.showMessage(data.message || '删除失败', 'error');
+                        }
+                    } catch (error) {
+                        this.showMessage('网络错误: ' + error.message, 'error');
+                    }
+                },
+
+                async submitGroupForm() {
+                    this.submittingGroup = true;
+                    try {
+                        // 处理模型列表 - 合并选择的模型和手动输入的模型
+                        const manualModels = this.modelsText.split('\n')
+                            .map(line => line.trim())
+                            .filter(line => line.length > 0);
+
+                        // 去重合并模型列表
+                        const allModels = [...new Set([...this.groupFormData.models, ...manualModels])];
+                        this.groupFormData.models = allModels;
+
+                        // 过滤空的API密钥
+                        this.groupFormData.api_keys = this.groupFormData.api_keys.filter(key => key.trim().length > 0);
+
+                        const url = this.showCreateGroupModal ? '/admin/groups' : `/admin/groups/${this.editingGroupId}`;
+                        const method = this.showCreateGroupModal ? 'POST' : 'PUT';
+
+                        const response = await fetch(url, {
+                            method: method,
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(this.groupFormData)
+                        });
+
+                        const data = await response.json();
+
+                        if (response.ok) {
+                            this.showMessage(data.message, 'success');
+                            this.closeGroupModal();
+                            // 重新加载提供商状态以显示新添加的分组
+                            await this.loadProviderStatuses();
+                        } else {
+                            this.showMessage(data.message || '操作失败', 'error');
+                        }
+                    } catch (error) {
+                        this.showMessage('网络错误: ' + error.message, 'error');
+                    } finally {
+                        this.submittingGroup = false;
+                    }
+                },
+
+                closeGroupModal() {
+                    this.showCreateGroupModal = false;
+                    this.showEditGroupModal = false;
+                    this.showBatchAddModal = false;
+                    this.editingGroupId = '';
+                    this.resetGroupForm();
+                },
+
+                resetGroupForm() {
+                    this.groupFormData = {
+                        group_id: '',
+                        name: '',
+                        provider_type: '',
+                        base_url: '',
+                        enabled: true,
+                        timeout: 30,
+                        max_retries: 3,
+                        rotation_strategy: 'round_robin',
+                        api_keys: [''],
+                        models: []
+                    };
+                    this.modelsText = '';
+                    this.selectedKeys = [];
+                    this.keyPage = 1;
+                    this.availableModels = [];
+                    this.filteredModels = [];
+                    this.modelSearchQuery = '';
+                    this.batchKeysText = '';
+                    this.keyValidationStatus = {};
+                    this.invalidKeyIndexes = [];
+                },
+
+                // 提供商类型变化时自动填充Base URL
+                onProviderTypeChange() {
+                    const defaultBaseUrls = {
+                        'openai': 'https://api.openai.com/v1',
+                        'anthropic': 'https://api.anthropic.com',
+                        'gemini': 'https://generativelanguage.googleapis.com',
+                        'azure_openai': 'https://your-resource-name.openai.azure.com',
+                        'openrouter': 'https://openrouter.ai/api/v1'
+                    };
+
+                    const providerType = this.groupFormData.provider_type;
+                    if (providerType && defaultBaseUrls[providerType]) {
+                        // 只有当Base URL为空或者是默认值时才自动填充
+                        const currentBaseUrl = this.groupFormData.base_url;
+                        const isDefaultUrl = Object.values(defaultBaseUrls).includes(currentBaseUrl);
+
+                        if (!currentBaseUrl || isDefaultUrl) {
+                            this.groupFormData.base_url = defaultBaseUrls[providerType];
+                        }
+                    }
+                },
+
+                addGroupApiKey() {
+                    this.groupFormData.api_keys.push('');
+                },
+
+                removeGroupApiKey(index) {
+                    if (this.groupFormData.api_keys.length > 1) {
+                        this.groupFormData.api_keys.splice(index, 1);
+                        // 调整页码如果当前页没有数据了
+                        if (this.keyPageOffset >= this.groupFormData.api_keys.length && this.keyPage > 1) {
+                            this.keyPage--;
+                        }
+                        // 清除选中状态
+                        this.selectedKeys = this.selectedKeys.filter(i => i < this.groupFormData.api_keys.length);
+                    }
+                },
+
+                // 批量添加密钥
+                addBatchKeys() {
+                    const keys = this.batchKeysText.split('\n')
+                        .map(line => line.trim())
+                        .filter(line => line.length > 0);
+
+                    if (keys.length > 0) {
+                        // 移除空的密钥项
+                        this.groupFormData.api_keys = this.groupFormData.api_keys.filter(key => key.trim().length > 0);
+                        // 添加新密钥
+                        this.groupFormData.api_keys.push(...keys);
+                        // 如果原来没有密钥，确保至少有一个空项
+                        if (this.groupFormData.api_keys.length === 0) {
+                            this.groupFormData.api_keys.push('');
+                        }
+                        this.batchKeysText = '';
+                        this.showBatchAddModal = false;
+                        this.showMessage(`成功添加 ${keys.length} 个密钥`, 'success');
+                    }
+                },
+
+                // 删除选中的密钥
+                deleteSelectedKeys() {
+                    if (this.selectedKeys.length === 0) return;
+
+                    if (!confirm(`确定要删除选中的 ${this.selectedKeys.length} 个密钥吗？`)) {
+                        return;
+                    }
+
+                    // 按索引倒序删除，避免索引变化问题
+                    const sortedIndexes = [...this.selectedKeys].sort((a, b) => b - a);
+                    sortedIndexes.forEach(index => {
+                        this.groupFormData.api_keys.splice(index, 1);
+                    });
+
+                    // 确保至少有一个空项
+                    if (this.groupFormData.api_keys.length === 0) {
+                        this.groupFormData.api_keys.push('');
+                    }
+
+                    // 清除选中状态
+                    this.selectedKeys = [];
+
+                    // 调整页码
+                    if (this.keyPageOffset >= this.groupFormData.api_keys.length && this.keyPage > 1) {
+                        this.keyPage--;
+                    }
+
+                    this.showMessage(`成功删除 ${sortedIndexes.length} 个密钥`, 'success');
+                },
+
+                // 删除失效密钥
+                deleteInvalidKeys() {
+                    // 找出所有失效的密钥索引
+                    const invalidIndexes = [];
+                    this.groupFormData.api_keys.forEach((key, index) => {
+                        if (key.trim() && this.keyValidationStatus[index] === 'invalid') {
+                            invalidIndexes.push(index);
+                        }
+                    });
+
+                    if (invalidIndexes.length === 0) {
+                        this.showMessage('没有找到失效的密钥', 'info');
+                        return;
+                    }
+
+                    if (!confirm(`确定要删除 ${invalidIndexes.length} 个失效密钥吗？`)) {
+                        return;
+                    }
+
+                    // 按索引倒序删除
+                    const sortedIndexes = [...invalidIndexes].sort((a, b) => b - a);
+                    sortedIndexes.forEach(index => {
+                        this.groupFormData.api_keys.splice(index, 1);
+                    });
+
+                    // 确保至少有一个空项
+                    if (this.groupFormData.api_keys.length === 0) {
+                        this.groupFormData.api_keys.push('');
+                    }
+
+                    // 重新构建验证状态，移除已删除密钥的状态
+                    const newValidationStatus = {};
+                    const newInvalidIndexes = [];
+                    this.groupFormData.api_keys.forEach((key, newIndex) => {
+                        // 找到原来的索引对应的状态
+                        for (let oldIndex = 0; oldIndex < this.groupFormData.api_keys.length + sortedIndexes.length; oldIndex++) {
+                            if (!sortedIndexes.includes(oldIndex) && this.keyValidationStatus[oldIndex]) {
+                                const adjustedIndex = oldIndex - sortedIndexes.filter(idx => idx < oldIndex).length;
+                                if (adjustedIndex === newIndex) {
+                                    newValidationStatus[newIndex] = this.keyValidationStatus[oldIndex];
+                                    if (this.keyValidationStatus[oldIndex] === 'invalid') {
+                                        newInvalidIndexes.push(newIndex);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    });
+
+                    this.keyValidationStatus = newValidationStatus;
+                    this.invalidKeyIndexes = newInvalidIndexes;
+
+                    // 调整页码
+                    if (this.keyPageOffset >= this.groupFormData.api_keys.length && this.keyPage > 1) {
+                        this.keyPage--;
+                    }
+
+                    this.showMessage(`成功删除 ${sortedIndexes.length} 个失效密钥`, 'success');
+                },
+
+                // 验证密钥
+                async validateKeys() {
+                    const validKeys = this.groupFormData.api_keys.filter(key => key.trim().length > 0);
+                    if (validKeys.length === 0) {
+                        this.showMessage('请先添加至少一个API密钥', 'error');
+                        return;
+                    }
+
+                    if (!this.groupFormData.provider_type || !this.groupFormData.base_url) {
+                        this.showMessage('请先填写提供商类型和Base URL', 'error');
+                        return;
+                    }
+
+                    this.validatingKeys = true;
+                    this.keyValidationStatus = {};
+                    this.invalidKeyIndexes = [];
+
+                    try {
+                        // 标记所有密钥为验证中
+                        this.groupFormData.api_keys.forEach((key, index) => {
+                            if (key.trim().length > 0) {
+                                this.keyValidationStatus[index] = 'validating';
+                            }
+                        });
+
+                        // 创建临时分组配置来验证密钥
+                        const tempGroupData = {
+                            name: this.groupFormData.name || 'temp',
+                            provider_type: this.groupFormData.provider_type,
+                            base_url: this.groupFormData.base_url,
+                            enabled: true,
+                            timeout: this.groupFormData.timeout || 30,
+                            max_retries: this.groupFormData.max_retries || 3,
+                            rotation_strategy: this.groupFormData.rotation_strategy || 'round_robin',
+                            api_keys: validKeys
+                        };
+
+                        const response = await fetch('/admin/keys/validate', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(tempGroupData)
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data.success && data.results) {
+                                let validCount = 0;
+                                let invalidCount = 0;
+
+                                // 更新验证状态
+                                data.results.forEach((result, resultIndex) => {
+                                    // 找到对应的原始索引
+                                    let originalIndex = 0;
+                                    let validKeyIndex = 0;
+                                    for (let i = 0; i < this.groupFormData.api_keys.length; i++) {
+                                        if (this.groupFormData.api_keys[i].trim().length > 0) {
+                                            if (validKeyIndex === resultIndex) {
+                                                originalIndex = i;
+                                                break;
+                                            }
+                                            validKeyIndex++;
+                                        }
+                                    }
+
+                                    if (result.valid) {
+                                        this.keyValidationStatus[originalIndex] = 'valid';
+                                        validCount++;
+                                    } else {
+                                        this.keyValidationStatus[originalIndex] = 'invalid';
+                                        this.invalidKeyIndexes.push(originalIndex);
+                                        invalidCount++;
+                                    }
+                                });
+
+                                this.showMessage(`验证完成：${validCount} 个有效，${invalidCount} 个无效`, validCount > 0 ? 'success' : 'error');
+                            } else {
+                                this.showMessage('验证失败: ' + (data.message || '未知错误'), 'error');
+                            }
+                        } else {
+                            const errorData = await response.json();
+                            this.showMessage('验证失败: ' + (errorData.message || '网络错误'), 'error');
+                        }
+                    } catch (error) {
+                        this.showMessage('验证失败: ' + error.message, 'error');
+                    } finally {
+                        this.validatingKeys = false;
+                    }
+                },
+
+            // 获取API密钥验证状态
+            async loadKeyValidationStatus(groupId) {
+                if (!groupId) return;
+
+                try {
+                    const response = await fetch(`/admin/keys/validation/${groupId}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.validation_status) {
+                            // 更新密钥验证状态
+                            this.keyValidationStatus = {};
+                            this.invalidKeyIndexes = [];
+                            this.groupFormData.api_keys.forEach((key, index) => {
+                                if (key.trim() && data.validation_status[key.trim()]) {
+                                    const status = data.validation_status[key.trim()];
+                                    if (status.is_valid === true) {
+                                        this.keyValidationStatus[index] = 'valid';
+                                    } else if (status.is_valid === false) {
+                                        this.keyValidationStatus[index] = 'invalid';
+                                        this.invalidKeyIndexes.push(index);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to load key validation status:', error);
+                }
+            },
+
+                // 获取密钥验证样式类
+                getKeyValidationClass(index) {
+                    const status = this.keyValidationStatus[index];
+                    if (status === 'valid') {
+                        return 'bg-green-50 border-green-200';
+                    } else if (status === 'invalid') {
+                        return 'bg-red-50 border-red-200';
+                    } else if (status === 'validating') {
+                        return 'bg-yellow-50 border-yellow-200';
+                    }
+                    return '';
+                },
+
+                // 获取失效密钥数量
+                getInvalidKeyCount() {
+                    let count = 0;
+                    this.groupFormData.api_keys.forEach((key, index) => {
+                        if (key.trim() && this.keyValidationStatus[index] === 'invalid') {
+                            count++;
+                        }
+                    });
+                    return count;
+                },
+
+                // 加载可用模型
+                async loadAvailableModels() {
+                    // 如果是编辑模式，可以直接从现有分组加载模型
+                    if (this.showEditGroupModal && this.editingGroupId) {
+                        this.loadingModels = true;
+                        try {
+                            const response = await fetch(`/admin/models/available/${this.editingGroupId}`);
+
+                            if (response.ok) {
+                                const data = await response.json();
+                                // 解析响应数据
+                                const groupData = data.data[this.editingGroupId];
+                                if (groupData && groupData.models && groupData.models.data) {
+                                    this.availableModels = groupData.models.data;
+                                    this.filterModels();
+                                    this.showMessage(`成功加载 ${this.availableModels.length} 个模型`, 'success');
+                                } else {
+                                    this.availableModels = [];
+                                    this.filterModels();
+                                    this.showMessage('未找到可用模型', 'error');
+                                }
+                            } else {
+                                const errorData = await response.json();
+                                this.showMessage('加载模型失败: ' + (errorData.error?.message || '未知错误'), 'error');
+                            }
+                        } catch (error) {
+                            this.showMessage('网络错误: ' + error.message, 'error');
+                        } finally {
+                            this.loadingModels = false;
+                        }
+                        return;
+                    }
+
+                    // 创建模式需要先验证配置
+                    if (!this.groupFormData.provider_type || !this.groupFormData.base_url) {
+                        this.showMessage('请先填写提供商类型和Base URL', 'error');
+                        return;
+                    }
+
+                    const validKeys = this.groupFormData.api_keys.filter(key => key.trim().length > 0);
+                    if (validKeys.length === 0) {
+                        this.showMessage('请先添加至少一个API密钥', 'error');
+                        return;
+                    }
+
+                    this.loadingModels = true;
+                    try {
+                        // 创建临时分组配置来测试模型加载
+                        const tempGroupData = {
+                            name: this.groupFormData.name || 'temp',
+                            provider_type: this.groupFormData.provider_type,
+                            base_url: this.groupFormData.base_url,
+                            enabled: true,
+                            timeout: this.groupFormData.timeout || 30,
+                            max_retries: this.groupFormData.max_retries || 3,
+                            rotation_strategy: this.groupFormData.rotation_strategy || 'round_robin',
+                            api_keys: validKeys
+                        };
+
+                        // 使用新的按类型加载模型API
+                        const response = await fetch('/admin/models/available/by-type', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                provider_type: tempGroupData.provider_type,
+                                base_url: tempGroupData.base_url,
+                                api_keys: tempGroupData.api_keys,
+                                timeout_seconds: tempGroupData.timeout,
+                                max_retries: tempGroupData.max_retries,
+                                headers: this.groupFormData.headers || {}
+                            })
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            // 解析新API的响应格式
+                            const groupData = data.data['temp-group'];
+                            if (groupData && groupData.models && groupData.models.data) {
+                                this.availableModels = groupData.models.data;
+                                this.filterModels();
+                                this.showMessage(`成功加载 ${this.availableModels.length} 个模型`, 'success');
+                            } else {
+                                this.availableModels = [];
+                                this.filterModels();
+                                this.showMessage('未找到可用模型', 'error');
+                            }
+                        } else {
+                            const errorData = await response.json();
+                            this.showMessage('加载模型失败: ' + (errorData.error || '未知错误'), 'error');
+                        }
+                    } catch (error) {
+                        this.showMessage('网络错误: ' + error.message, 'error');
+                    } finally {
+                        this.loadingModels = false;
+                    }
+                },
+
+                // 筛选模型
+                filterModels() {
+                    if (!this.modelSearchQuery.trim()) {
+                        this.filteredModels = this.availableModels;
+                    } else {
+                        const query = this.modelSearchQuery.toLowerCase();
+                        this.filteredModels = this.availableModels.filter(model =>
+                            model.id.toLowerCase().includes(query) ||
+                            (model.owned_by && model.owned_by.toLowerCase().includes(query))
+                        );
+                    }
+                },
+
+                // 清除模型搜索
+                clearModelSearch() {
+                    this.modelSearchQuery = '';
+                    this.filterModels();
+                },
+
+                // 全选模型
+                selectAllModels() {
+                    this.groupFormData.models = this.filteredModels.map(model => model.id);
+                },
+
+                // 清空模型选择
+                clearAllModels() {
+                    this.groupFormData.models = [];
+                },
+
+                // 移除单个模型
+                removeModel(modelId) {
+                    this.groupFormData.models = this.groupFormData.models.filter(id => id !== modelId);
+                },
+
+                showMessage(msg, type = 'success') {
+                    this.message = msg;
+                    this.messageType = type;
+                    setTimeout(() => {
+                        this.message = '';
+                    }, 3000);
+                },
+
+                getKeyStatusText(groupId, provider) {
+                    const keyStatusData = this.keyStatus.groups[groupId];
+                    if (keyStatusData) {
+                        return `${keyStatusData.valid_keys}/${keyStatusData.total_keys}`;
+                    }
+                    return `${provider.active_keys}/${provider.total_keys}`;
+                },
+
+                // 获取详细的密钥状态数据
+                getKeyStatusData(groupId, provider) {
+                    const keyStatusData = this.keyStatus.groups && this.keyStatus.groups[groupId];
+
+                    if (keyStatusData) {
+                        // 如果有检测数据，使用检测结果
+                        const valid = keyStatusData.valid_keys || 0;
+                        const invalid = keyStatusData.invalid_keys || 0;
+                        const total = keyStatusData.total_keys || 0;
+
+                        return {
+                            total: total,
+                            valid: valid,
+                            invalid: invalid,
+                            unknown: 0 // 已检测完毕，没有未知状态
+                        };
+                    } else {
+                        // 如果没有检测数据，使用提供商基本信息
+                        const total = provider.total_keys || 0;
+                        const active = provider.active_keys || 0;
+
+                        return {
+                            total: total,
+                            valid: 0,
+                            invalid: 0,
+                            unknown: total // 所有密钥都是未检测状态
+                        };
+                    }
+                },
+
+                startAutoRefresh() {
+                    this.stopAutoRefresh();
+                    this.refreshTimer = setInterval(() => {
+                        this.refreshData();
+                    }, this.refreshInterval);
+                },
+
+                stopAutoRefresh() {
+                    if (this.refreshTimer) {
+                        clearInterval(this.refreshTimer);
+                        this.refreshTimer = null;
+                    }
+                },
+
+                updateRefreshInterval() {
+                    if (this.autoRefresh) {
+                        this.startAutoRefresh();
+                    }
+                },
+
+                getStatusText(status) {
+                    const statusMap = {
+                        'healthy': '健康',
+                        'degraded': '降级',
+                        'unhealthy': '异常'
+                    };
+                    return statusMap[status] || '未知';
+                },
+
+                getProviderTypeClass(type) {
+                    const typeClasses = {
+                        'openai': 'bg-blue-100 text-blue-800',
+                        'gemini': 'bg-green-100 text-green-800',
+                        'anthropic': 'bg-purple-100 text-purple-800',
+                        'azure_openai': 'bg-cyan-100 text-cyan-800'
+                    };
+                    return typeClasses[type] || 'bg-gray-100 text-gray-800';
+                },
+
+                formatDuration(nanoseconds) {
+                    if (!nanoseconds) return '--';
+                    const seconds = Math.floor(nanoseconds / 1000000000);
+                    const hours = Math.floor(seconds / 3600);
+                    const minutes = Math.floor((seconds % 3600) / 60);
+                    return `${hours}h ${minutes}m`;
+                },
+
+                formatResponseTime(nanoseconds) {
+                    if (!nanoseconds) return '--';
+                    const ms = Math.floor(nanoseconds / 1000000);
+                    return `${ms}ms`;
+                },
+
+                formatDate(dateStr) {
+                    if (!dateStr) return '--';
+                    return new Date(dateStr).toLocaleString('zh-CN');
+                },
+
+                formatPercentage(value) {
+                    if (value === null || value === undefined) return '0%';
+                    return parseFloat(value).toFixed(2) + '%';
+                },
+
+                // 启动定时刷新系统健康状态（每30秒）
+                startSystemHealthRefresh() {
+                    // 立即执行一次刷新
+                    this.refreshSystemData();
+
+                    // 设置定时器，每300秒刷新一次
+                    setInterval(() => {
+                        this.refreshSystemData();
+                    }, 300000);
+                },
+
+                // 刷新系统数据（不包括密钥验证）
+                async refreshSystemData() {
+                    try {
+                        await Promise.all([
+                            this.loadSystemHealth(),
+                            this.loadProviderStatuses()
+                        ]);
+                        this.lastUpdate = new Date();
+                    } catch (error) {
+                        console.error('Failed to refresh system data:', error);
+                    }
+                },
+
+                // 代理密钥管理方法
+                async loadProxyKeys(page = null, search = null) {
+                    try {
+                        // 使用传入的参数或当前状态
+                        const currentPage = page !== null ? page : this.proxyKeyPage;
+                        const currentSearch = search !== null ? search : this.proxyKeySearch;
+
+                        // 构建查询参数
+                        const params = new URLSearchParams({
+                            page: currentPage.toString(),
+                            page_size: this.proxyKeyPageSize.toString()
+                        });
+
+                        if (currentSearch.trim()) {
+                            params.append('search', currentSearch.trim());
+                        }
+
+                        const response = await fetch(`/admin/proxy-keys?${params}`);
+                        const result = await response.json();
+
+                        if (result.success) {
+                            this.proxyKeys = result.keys || [];
+                            this.proxyKeyPagination = result.pagination || {};
+                            this.proxyKeyPage = this.proxyKeyPagination.page || 1;
+                        } else {
+                            console.error('加载代理密钥失败:', result);
+                        }
+                    } catch (error) {
+                        console.error('加载代理密钥失败:', error);
+                    }
+                },
+
+                async generateProxyKey() {
+                    if (!this.newProxyKey.name.trim()) {
+                        this.showMessage('请输入密钥名称', 'error');
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch('/admin/proxy-keys', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(this.newProxyKey)
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            this.showMessage('代理密钥生成成功！', 'success');
+                            this.showGenerateProxyKeyForm = false;
+                            this.resetProxyKeyForm();
+                            await this.loadProxyKeys();
+                        } else {
+                            this.showMessage('生成失败: ' + (result.error || '未知错误'), 'error');
+                        }
+                    } catch (error) {
+                        console.error('生成代理密钥失败:', error);
+                        this.showMessage('网络错误，请检查连接', 'error');
+                    }
+                },
+
+                async deleteProxyKey(keyId) {
+                    if (!confirm('确定要删除这个代理密钥吗？删除后无法恢复。')) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`/admin/proxy-keys/${keyId}`, {
+                            method: 'DELETE'
+                        });
+
+                        const result = await response.json();
+                        if (result.success) {
+                            this.showMessage('代理密钥删除成功！', 'success');
+                            await this.loadProxyKeys();
+                        } else {
+                            this.showMessage('删除失败: ' + (result.error || '未知错误'), 'error');
+                        }
+                    } catch (error) {
+                        console.error('删除代理密钥失败:', error);
+                        this.showMessage('网络错误，请检查连接', 'error');
+                    }
+                },
+
+                resetProxyKeyForm() {
+                    this.newProxyKey = {
+                        name: '',
+                        description: '',
+                        allowedGroups: []
+                    };
+                },
+
+                toggleProxyKeyGroup(groupId, checked) {
+                    if (checked) {
+                        if (!this.newProxyKey.allowedGroups.includes(groupId)) {
+                            this.newProxyKey.allowedGroups.push(groupId);
+                        }
+                    } else {
+                        const index = this.newProxyKey.allowedGroups.indexOf(groupId);
+                        if (index > -1) {
+                            this.newProxyKey.allowedGroups.splice(index, 1);
+                        }
+                    }
+                },
+
+                getGroupName(groupId) {
+                    const provider = this.providerStatuses[groupId];
+                    return provider ? provider.group_name : groupId;
+                },
+
+                copyToClipboard(text) {
+                    navigator.clipboard.writeText(text).then(() => {
+                        this.showMessage('已复制到剪贴板', 'success');
+                    }).catch(() => {
+                        // 降级方案
+                        const textArea = document.createElement('textarea');
+                        textArea.value = text;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        this.showMessage('已复制到剪贴板', 'success');
+                    });
+                },
+
+                // 代理密钥搜索和分页方法
+                async searchProxyKeys() {
+                    this.proxyKeyPage = 1; // 搜索时重置到第一页
+                    await this.loadProxyKeys(1, this.proxyKeySearch);
+                },
+
+                async goToProxyKeyPage(page) {
+                    if (page >= 1 && page <= this.proxyKeyPagination.total_pages) {
+                        await this.loadProxyKeys(page);
+                    }
+                },
+
+                async changeProxyKeyPageSize() {
+                    this.proxyKeyPage = 1; // 改变页面大小时重置到第一页
+                    await this.loadProxyKeys(1);
+                },
+
+                clearProxyKeySearch() {
+                    this.proxyKeySearch = '';
+                    this.searchProxyKeys();
+                },
+
+                viewProviderDetails(groupId) {
+                    // 实现查看提供商详情的逻辑
+                    alert(`查看提供商 ${groupId} 的详细信息`);
+                },
+
+                exportHealthReport() {
+                    // 实现导出健康报告的逻辑
+                    const report = {
+                        timestamp: new Date().toISOString(),
+                        system_health: this.systemHealth,
+                        provider_statuses: this.providerStatuses
+                    };
+                    
+                    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `health_report_${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                },
+
+                viewSystemLogs() {
+                    window.location.href = '/logs';
+                }
+            }
+        }
+
+        function logout() {
+            fetch('/admin/logout', { method: 'POST' })
+                .then(() => {
+                    window.location.href = '/';
+                })
+                .catch(error => {
+                    console.error('Logout error:', error);
+                    window.location.href = '/';
+                });
+        }
+    </script>
+</body>
+</html>

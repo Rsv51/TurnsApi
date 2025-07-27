@@ -44,7 +44,6 @@ type KeyManager struct {
 	rotationStrategy  string
 	currentIndex      int
 	mutex             sync.RWMutex
-	healthCheckTicker *time.Ticker
 	ctx               context.Context
 	cancel            context.CancelFunc
 	configPath        string // 配置文件路径
@@ -86,11 +85,7 @@ func NewKeyManager(keys []string, rotationStrategy string, healthCheckInterval t
 		}
 	}
 
-	// 启动健康检查
-	if healthCheckInterval > 0 {
-		km.healthCheckTicker = time.NewTicker(healthCheckInterval)
-		go km.startHealthCheck()
-	}
+	// 移除了定时健康检查
 
 	return km
 }
@@ -262,38 +257,7 @@ func (km *KeyManager) maskKey(key string) string {
 	return key[:4] + "****" + key[len(key)-4:]
 }
 
-// startHealthCheck 启动健康检查
-func (km *KeyManager) startHealthCheck() {
-	for {
-		select {
-		case <-km.ctx.Done():
-			return
-		case <-km.healthCheckTicker.C:
-			km.performHealthCheck()
-		}
-	}
-}
-
-// performHealthCheck 执行健康检查
-func (km *KeyManager) performHealthCheck() {
-	km.mutex.Lock()
-	defer km.mutex.Unlock()
-
-	// 这里可以实现实际的健康检查逻辑
-	// 例如向OpenRouter API发送测试请求
-	log.Println("Performing health check for API keys...")
-
-	// 重置长时间未使用的错误计数
-	now := time.Now()
-	for _, status := range km.keyStatuses {
-		if !status.IsActive && now.Sub(status.LastErrorTime) > 10*time.Minute {
-			status.IsActive = true
-			status.ErrorCount = 0
-			status.LastError = ""
-			log.Printf("API key re-enabled after cooldown: %s", km.maskKey(status.Key))
-		}
-	}
-}
+// 移除了定时健康检查方法
 
 // AddKey 添加新的API密钥
 func (km *KeyManager) AddKey(key, name, description string, allowedModels []string) error {
@@ -621,9 +585,6 @@ func (km *KeyManager) GetAllAllowedModels() []string {
 func (km *KeyManager) Close() {
 	if km.cancel != nil {
 		km.cancel()
-	}
-	if km.healthCheckTicker != nil {
-		km.healthCheckTicker.Stop()
 	}
 }
 

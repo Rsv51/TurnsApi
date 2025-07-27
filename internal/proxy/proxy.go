@@ -163,7 +163,8 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, false, time.Since(startTime), err)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 500, false, time.Since(startTime), err)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -182,7 +183,8 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, false, time.Since(startTime), err)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 500, false, time.Since(startTime), err)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -215,7 +217,8 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
 		}
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
@@ -237,7 +240,8 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 			// 记录日志
 			if p.requestLogger != nil {
 				proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-				p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
+				providerGroup := p.getProviderGroup(c, req.Model)
+				p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
 			}
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": gin.H{
@@ -259,7 +263,8 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 502, false, time.Since(startTime), err)
 		}
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
@@ -280,8 +285,9 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			providerGroup := p.getProviderGroup(c, req.Model)
 			requestErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, false, duration, requestErr)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, false, duration, requestErr)
 		}
 
 		// 转发错误响应
@@ -295,7 +301,8 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 	// 记录成功日志
 	if p.requestLogger != nil {
 		proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, false, duration, nil)
+		providerGroup := p.getProviderGroup(c, req.Model)
+		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, false, duration, nil)
 	}
 
 	// 转发成功响应
@@ -314,7 +321,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), err)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), err)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -333,7 +341,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), err)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), err)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -372,7 +381,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, true, time.Since(startTime), err)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 502, true, time.Since(startTime), err)
 		}
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
@@ -393,8 +403,9 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			providerGroup := p.getProviderGroup(c, req.Model)
 			requestErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, true, time.Since(startTime), requestErr)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), string(respBody), resp.StatusCode, true, time.Since(startTime), requestErr)
 		}
 
 		c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
@@ -417,7 +428,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 			// 记录日志
 			if p.requestLogger != nil {
 				proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-				p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, true, time.Since(startTime), err)
+				providerGroup := p.getProviderGroup(c, req.Model)
+				p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 502, true, time.Since(startTime), err)
 			}
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": gin.H{
@@ -442,8 +454,9 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+			providerGroup := p.getProviderGroup(c, req.Model)
 			streamErr := fmt.Errorf("streaming not supported")
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), streamErr)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 500, true, time.Since(startTime), streamErr)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -471,7 +484,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 				// 记录日志
 				if p.requestLogger != nil {
 					proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-					p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), responseBuffer.String(), 502, true, time.Since(startTime), err)
+					providerGroup := p.getProviderGroup(c, req.Model)
+					p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), responseBuffer.String(), 502, true, time.Since(startTime), err)
 				}
 				return false
 			}
@@ -501,7 +515,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		// 记录成功日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
-			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), responseBuffer.String(), 200, true, duration, nil)
+			providerGroup := p.getProviderGroup(c, req.Model)
+			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), responseBuffer.String(), 200, true, duration, nil)
 		}
 		return true
 	}
@@ -511,8 +526,9 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 	// 记录日志
 	if p.requestLogger != nil {
 		proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
+		providerGroup := p.getProviderGroup(c, req.Model)
 		streamErr := fmt.Errorf("no data received from stream")
-		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, apiKey, req.Model, string(reqBody), "", 502, true, duration, streamErr)
+		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), "", 502, true, duration, streamErr)
 	}
 	return false
 }
@@ -660,4 +676,22 @@ func (p *OpenRouterProxy) HandleModels(c *gin.Context) {
 
 	// 如果过滤失败，返回原始响应
 	c.Data(http.StatusOK, "application/json", body)
+}
+
+// getProviderGroup 获取提供商分组信息
+func (p *OpenRouterProxy) getProviderGroup(c *gin.Context, model string) string {
+	// 尝试从上下文中获取分组信息
+	if groupID, exists := c.Get("provider_group"); exists {
+		if groupStr, ok := groupID.(string); ok {
+			return groupStr
+		}
+	}
+
+	// 如果上下文中没有，尝试根据模型推断分组
+	if group, groupID := p.config.GetGroupByModel(model); group != nil {
+		return groupID
+	}
+
+	// 默认返回空字符串
+	return ""
 }

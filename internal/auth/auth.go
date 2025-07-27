@@ -345,3 +345,90 @@ func (am *AuthManager) APIKeyAuthMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// HandleLogin 处理登录请求
+func (am *AuthManager) HandleLogin(c *gin.Context) {
+	if !am.config.Auth.Enabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "Authentication disabled",
+		})
+		return
+	}
+
+	var loginReq struct {
+		Username string `json:"username" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&loginReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Invalid request format",
+		})
+		return
+	}
+
+	// 使用Login方法创建会话
+	session, err := am.Login(loginReq.Username, loginReq.Password)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": "Invalid username or password",
+		})
+		return
+	}
+
+	token := session.Token
+
+	// 设置cookie
+	c.SetCookie("auth_token", token, int(am.config.Auth.SessionTimeout.Seconds()), "/", "", false, true)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Login successful",
+		"token":   token,
+	})
+}
+
+// HandleLogout 处理登出请求
+func (am *AuthManager) HandleLogout(c *gin.Context) {
+	// 从cookie获取token
+	token, err := c.Cookie("auth_token")
+	if err == nil && token != "" {
+		// 删除会话
+		am.mutex.Lock()
+		delete(am.sessions, token)
+		am.mutex.Unlock()
+	}
+
+	// 清除cookie
+	c.SetCookie("auth_token", "", -1, "/", "", false, true)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Logout successful",
+	})
+}
+
+// HandleLoginPage 处理登录页面
+func (am *AuthManager) HandleLoginPage(c *gin.Context) {
+	if !am.config.Auth.Enabled {
+		c.Redirect(http.StatusFound, "/")
+		return
+	}
+
+	// 检查是否已经登录
+	token, err := c.Cookie("auth_token")
+	if err == nil && token != "" {
+		_, valid := am.ValidateToken(token)
+		if valid {
+			c.Redirect(http.StatusFound, "/")
+			return
+		}
+	}
+
+	c.HTML(http.StatusOK, "login.html", gin.H{
+		"title": "登录 - TurnsAPI",
+	})
+}

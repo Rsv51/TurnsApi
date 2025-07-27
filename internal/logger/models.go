@@ -9,6 +9,7 @@ type RequestLog struct {
 	ID             int64     `json:"id" db:"id"`
 	ProxyKeyName   string    `json:"proxy_key_name" db:"proxy_key_name"`     // 代理服务API密钥名称
 	ProxyKeyID     string    `json:"proxy_key_id" db:"proxy_key_id"`         // 代理服务API密钥ID
+	ProviderGroup  string    `json:"provider_group" db:"provider_group"`     // 提供商分组
 	OpenRouterKey  string    `json:"openrouter_key" db:"openrouter_key"`     // 使用的OpenRouter密钥（脱敏）
 	Model          string    `json:"model" db:"model"`
 	RequestBody    string    `json:"request_body" db:"request_body"`
@@ -26,6 +27,7 @@ type RequestLogSummary struct {
 	ID            int64     `json:"id"`
 	ProxyKeyName  string    `json:"proxy_key_name"`
 	ProxyKeyID    string    `json:"proxy_key_id"`
+	ProviderGroup string    `json:"provider_group"`
 	OpenRouterKey string    `json:"openrouter_key"`
 	Model         string    `json:"model"`
 	StatusCode    int       `json:"status_code"`
@@ -38,14 +40,15 @@ type RequestLogSummary struct {
 
 // ProxyKey 代理服务API密钥结构
 type ProxyKey struct {
-	ID          string    `json:"id" db:"id"`
-	Name        string    `json:"name" db:"name"`
-	Description string    `json:"description" db:"description"`
-	Key         string    `json:"key" db:"key"`
-	IsActive    bool      `json:"is_active" db:"is_active"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
-	LastUsedAt  *time.Time `json:"last_used_at" db:"last_used_at"`
+	ID            string     `json:"id" db:"id"`
+	Name          string     `json:"name" db:"name"`
+	Description   string     `json:"description" db:"description"`
+	Key           string     `json:"key" db:"key"`
+	AllowedGroups []string   `json:"allowed_groups" db:"allowed_groups"` // 允许访问的分组ID列表
+	IsActive      bool       `json:"is_active" db:"is_active"`
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+	LastUsedAt    *time.Time `json:"last_used_at" db:"last_used_at"`
 }
 
 // ProxyKeyStats 代理密钥统计
