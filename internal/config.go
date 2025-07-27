@@ -41,6 +41,7 @@ type Config struct {
 	Server struct {
 		Port string `yaml:"port"`
 		Host string `yaml:"host"`
+		Mode string `yaml:"mode"`
 	} `yaml:"server"`
 
 	Auth struct {
@@ -106,6 +107,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 	if config.Server.Host == "" {
 		config.Server.Host = "0.0.0.0"
+	}
+	if config.Server.Mode == "" {
+		config.Server.Mode = "release"  // 默认使用release模式
 	}
 	if config.Logging.Level == "" {
 		config.Logging.Level = "info"

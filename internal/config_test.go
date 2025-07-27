@@ -12,6 +12,7 @@ func TestLoadConfig(t *testing.T) {
 server:
   port: "8080"
   host: "0.0.0.0"
+  mode: "release"
 
 auth:
   enabled: true
@@ -92,6 +93,10 @@ database:
 
 	if config.Server.Host != "0.0.0.0" {
 		t.Errorf("Expected host 0.0.0.0, got %s", config.Server.Host)
+	}
+
+	if config.Server.Mode != "release" {
+		t.Errorf("Expected mode release, got %s", config.Server.Mode)
 	}
 
 	// Test auth config
@@ -215,6 +220,11 @@ database:
 	config, err := LoadConfig(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("Failed to load legacy config: %v", err)
+	}
+
+	// Test that default mode is set for legacy config
+	if config.Server.Mode != "release" {
+		t.Errorf("Expected default mode 'release', got %s", config.Server.Mode)
 	}
 
 	// Should create a default OpenRouter group

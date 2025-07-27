@@ -1,9 +1,10 @@
-# TurnsAPI - OpenRouter API 代理服务
+# TurnsAPI - 多提供商 API 代理服务
 
-TurnsAPI 是一个用 Go 语言开发的高性能 API 代理服务，专门用于转发大模型请求到 OpenRouter API。它提供了智能的 API 密钥轮询系统、流式响应支持和实时监控功能。
+TurnsAPI 是一个用 Go 语言开发的高性能多提供商 API 代理服务，支持 OpenAI、Google Gemini、Anthropic Claude、Azure OpenAI 等多个大模型提供商。它提供了智能的 API 密钥轮询系统、流式响应支持和实时监控功能。
 
 ## 🚀 主要特性
 
+- **多提供商支持**: 支持 OpenAI、Google Gemini、Anthropic Claude、Azure OpenAI 等多个提供商
 - **智能密钥轮询**: 支持轮询、随机和最少使用三种轮询策略
 - **流式响应支持**: 完全支持 Server-Sent Events (SSE) 流式响应
 - **高可用性**: 自动故障转移和重试机制
@@ -12,12 +13,24 @@ TurnsAPI 是一个用 Go 语言开发的高性能 API 代理服务，专门用�
 - **日志分析**: 提供详细的统计分析，包括API密钥使用情况和模型调用统计
 - **安全认证**: 内置用户名密码认证系统，保护 API 和管理界面
 - **错误处理**: 智能错误处理和 API 密钥健康检查
+- **生产就绪**: 支持 release 模式，优化生产环境性能
 - **易于配置**: 基于 YAML 的配置文件
+
+## 🌐 支持的提供商
+
+| 提供商 | 类型 | 支持的模型 |
+|--------|------|------------|
+| **OpenAI** | `openai` | GPT-3.5, GPT-4, GPT-4 Turbo, GPT-4o 等 |
+| **Google Gemini** | `gemini` | Gemini Pro, Gemini Pro Vision, Gemini 1.5 等 |
+| **Anthropic Claude** | `anthropic` | Claude 3 Haiku, Claude 3 Sonnet, Claude 3 Opus 等 |
+| **Azure OpenAI** | `azure_openai` | Azure 部署的 OpenAI 模型 |
+| **OpenRouter** | `openai` | 支持所有 OpenRouter 可用模型 |
+| **自定义兼容服务** | `openai` | 任何 OpenAI API 兼容的服务 |
 
 ## 📋 系统要求
 
-- Go 1.21 或更高版本
-- 有效的 OpenRouter API 密钥
+- Go 1.23 或更高版本
+- 有效的 API 密钥（支持多个提供商）
 
 ## 🛠️ 安装和配置
 
@@ -63,6 +76,7 @@ cp config/config.example.yaml config/config.yaml
 docker run -d \
   --name turnsapi \
   -p 8080:8080 \
+  -e GIN_MODE=release \
   -v $(pwd)/config:/app/config \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/data:/app/data \
@@ -103,9 +117,15 @@ go run cmd/turnsapi/main.go -config config/config.yaml
 
 ```yaml
 server:
-  port: 8080        # 服务端口
+  port: "8080"      # 服务端口
   host: "0.0.0.0"   # 监听地址
+  mode: "release"   # 服务器模式: debug, release, test (生产环境建议使用release)
 ```
+
+**服务器模式说明：**
+- `debug`: 开发模式，显示详细的路由信息和调试日志
+- `release`: 生产模式，隐藏调试信息，提供更好的性能
+- `test`: 测试模式，用于单元测试环境
 
 ### 认证配置
 
@@ -117,25 +137,69 @@ auth:
   session_timeout: "24h"        # 会话超时时间
 ```
 
-### OpenRouter 配置
+### 多提供商配置
 
 ```yaml
-openrouter:
-  base_url: "https://openrouter.ai/api/v1"  # OpenRouter API 基础 URL
-  timeout: 30s                              # 请求超时时间
-  max_retries: 3                            # 最大重试次数
+user_groups:
+  # OpenAI 官方 API
+  openai_official:
+    name: "OpenAI Official"
+    provider_type: "openai"
+    base_url: "https://api.openai.com/v1"
+    enabled: true
+    timeout: 30s
+    max_retries: 3
+    rotation_strategy: "round_robin"
+    api_keys:
+      - "sk-your-openai-key-1"
+      - "sk-your-openai-key-2"
+    models:
+      - "gpt-3.5-turbo"
+      - "gpt-4"
+      - "gpt-4o"
+    headers:
+      Content-Type: "application/json"
+
+  # Google Gemini API
+  google_gemini:
+    name: "Google Gemini"
+    provider_type: "gemini"
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
+    enabled: true
+    timeout: 30s
+    max_retries: 3
+    rotation_strategy: "random"
+    api_keys:
+      - "your-gemini-api-key"
+    models:
+      - "gemini-pro"
+      - "gemini-1.5-pro"
+    headers:
+      Content-Type: "application/json"
+
+  # Anthropic Claude API
+  anthropic_claude:
+    name: "Anthropic Claude"
+    provider_type: "anthropic"
+    base_url: "https://api.anthropic.com"
+    api_version: "2023-06-01"
+    enabled: true
+    timeout: 30s
+    max_retries: 3
+    rotation_strategy: "least_used"
+    api_keys:
+      - "your-anthropic-key"
+    models:
+      - "claude-3-sonnet-20240229"
+      - "claude-3-opus-20240229"
+    headers:
+      Content-Type: "application/json"
 ```
 
-### API 密钥配置
-
-```yaml
-api_keys:
-  keys:
-    - "your-api-key-1"
-    - "your-api-key-2"
-  rotation_strategy: "round_robin"    # 轮询策略: round_robin, random, least_used
-  health_check_interval: 60s          # 健康检查间隔
-```
+**轮询策略说明：**
+- `round_robin`: 轮询使用密钥
+- `random`: 随机选择密钥
+- `least_used`: 选择使用次数最少的密钥
 
 ### 日志配置
 
@@ -181,18 +245,37 @@ curl -X POST http://localhost:8080/auth/login \
 }
 ```
 
+### 提供商选择
+
+可以通过以下方式指定使用的提供商：
+
+1. **通过请求头指定**：
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-access-token" \
+  -H "X-Provider-Group: openai_official" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+2. **自动路由**：系统会根据模型名称自动选择合适的提供商
+3. **默认分组**：如果未指定，使用第一个启用的分组
+
 ### 聊天完成 API
 
-**端点**: `POST /api/v1/chat/completions`
+**端点**: `POST /v1/chat/completions`
 
 **请求示例**:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-access-token" \
   -d '{
-    "model": "minimax/minimax-m1",
+    "model": "gpt-4",
     "messages": [
       {
         "role": "user",
@@ -206,11 +289,11 @@ curl -X POST http://localhost:8080/api/v1/chat/completions \
 **流式请求示例**:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-access-token" \
   -d '{
-    "model": "minimax/minimax-m1",
+    "model": "gpt-4",
     "messages": [
       {
         "role": "user",
@@ -225,7 +308,7 @@ curl -X POST http://localhost:8080/api/v1/chat/completions \
 
 | 参数 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| `model` | string | 是 | 模型名称，如 `minimax/minimax-m1` |
+| `model` | string | 是 | 模型名称，如 `gpt-4`, `claude-3-sonnet-20240229` |
 | `messages` | array | 是 | 对话消息数组 |
 | `stream` | boolean | 否 | 是否启用流式响应 |
 | `temperature` | number | 否 | 温度参数 (0-2) |
@@ -233,25 +316,37 @@ curl -X POST http://localhost:8080/api/v1/chat/completions \
 | `top_p` | number | 否 | Top-p 采样参数 |
 | `stop` | string/array | 否 | 停止词 |
 
+### 模型列表 API
+
+**端点**: `GET /v1/models`
+
+```bash
+curl -X GET http://localhost:8080/v1/models \
+  -H "Authorization: Bearer your-access-token"
+```
+
+可以通过查询参数指定提供商分组：
+```bash
+curl -X GET "http://localhost:8080/v1/models?provider_group=openai_official" \
+  -H "Authorization: Bearer your-access-token"
+```
+
 ## 🖥️ Web 界面
 
 ### 访问地址
 
-- **登录页面**: http://localhost:8080/auth/login
-- **首页**: http://localhost:8080/ （需要登录）
-- **仪表板**: http://localhost:8080/dashboard （需要登录）
-- **请求日志**: http://localhost:8080/logs （需要登录）
-- **API 状态**: http://localhost:8080/admin/status （需要认证）
-- **密钥状态**: http://localhost:8080/admin/keys （需要认证）
+http://localhost:8080
 
 ### 功能特性
 
-- 实时显示 API 密钥状态
-- 服务性能监控
-- 使用统计和错误统计
+- **多提供商管理**: 统一管理多个AI提供商的配置
+- **实时监控**: 显示各提供商的API密钥状态和健康状况
+- **分组管理**: 创建、编辑、删除提供商分组
+- **密钥验证**: 实时验证API密钥的有效性
+- **模型测试**: 测试各提供商的模型可用性
 - **请求日志查看**: 详细的API请求和响应日志记录
 - **统计分析**: API密钥使用统计和模型调用分析
-- 自动刷新功能
+- **自动刷新功能**: 实时更新状态信息
 
 ## 🔍 监控和管理
 
@@ -432,16 +527,6 @@ tail -f logs/turnsapi.log
 grep "ERROR" logs/turnsapi.log
 ```
 
-## 🔒 安全注意事项
-
-### 生产环境部署
-
-1. **修改默认密码**: 请务必修改配置文件中的默认用户名和密码
-2. **使用强密码**: 建议使用包含大小写字母、数字和特殊字符的强密码
-3. **启用 HTTPS**: 在生产环境中建议使用反向代理（如 Nginx）启用 HTTPS
-4. **定期更新密码**: 建议定期更新管理员密码
-5. **网络安全**: 限制管理界面的访问 IP 范围
-
 ### 认证配置示例
 
 ```yaml
@@ -451,6 +536,23 @@ auth:
   password: "your-strong-password-123!"
   session_timeout: "8h"
 ```
+
+## 📝 更新日志
+
+### v2.0.0 (最新版本)
+- ✨ **多提供商支持**: 新增对 OpenAI、Google Gemini、Anthropic Claude、Azure OpenAI 等多个提供商的支持
+- 🚀 **生产模式优化**: 添加 `server.mode` 配置，支持 debug/release/test 模式
+- 🔧 **配置升级**: 从单一 OpenRouter 配置升级为多提供商分组配置
+- 📊 **增强监控**: 新增多提供商健康检查和状态监控
+- 🎛️ **管理界面**: 全新的分组管理界面，支持动态配置
+- 🔑 **密钥验证**: 实时验证各提供商API密钥的有效性
+- 🧪 **模型测试**: 支持测试各提供商的模型可用性
+- 📈 **向后兼容**: 完全兼容旧版本配置文件
+
+### v1.x.x (旧版本)
+- 基础的 OpenRouter API 代理功能
+- 单一提供商支持
+- 基本的密钥轮询和监控
 
 ## 🤝 贡献
 

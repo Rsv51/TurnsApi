@@ -59,18 +59,18 @@ func main() {
 		}
 
 		if len(validKeys) == 0 {
-			log.Printf("警告: 分组 %s (%s) 没有有效的API密钥", groupID, group.Name)
+			log.Printf("警告: 分组 %s (%s) 没有API密钥", groupID, group.Name)
 		} else {
-			log.Printf("分组 %s (%s) 加载了 %d 个有效的API密钥", groupID, group.Name, len(validKeys))
+			log.Printf("分组 %s (%s) 加载了 %d 个API密钥", groupID, group.Name, len(validKeys))
 			totalValidKeys += len(validKeys)
 		}
 	}
 
 	if totalValidKeys == 0 {
-		log.Fatal("所有启用的分组都没有有效的API密钥，请检查配置")
+		log.Fatal("所有启用的分组都没有API密钥，请检查配置")
 	}
 
-	log.Printf("总共加载了 %d 个有效的API密钥，分布在 %d 个分组中", totalValidKeys, len(enabledGroups))
+	log.Printf("总共加载了 %d 个API密钥，分布在 %d 个分组中", totalValidKeys, len(enabledGroups))
 
 	// 创建日志目录
 	if config.Logging.File != "" {

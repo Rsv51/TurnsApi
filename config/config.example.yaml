@@ -5,6 +5,7 @@
 server:
   port: "8080"
   host: "0.0.0.0"
+  mode: "release"  # 服务器模式: debug, release, test (生产环境建议使用release)
 
 # 认证配置
 auth:

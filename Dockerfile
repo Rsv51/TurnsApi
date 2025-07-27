@@ -1,6 +1,6 @@
 # 多阶段构建 Dockerfile for TurnsAPI
 # 第一阶段：构建阶段
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
@@ -52,6 +52,9 @@ RUN mkdir -p config logs data web/static web/templates && \
 COPY --chown=turnsapi:turnsapi config/config.example.yaml ./config/
 COPY --chown=turnsapi:turnsapi web/ ./web/
 
+# 设置生产环境变量
+ENV GIN_MODE=release
+
 # 暴露端口
 EXPOSE 8080
 
@@ -60,4 +63,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
 # 启动命令
+# 注意：生产环境请确保挂载正确的config.yaml文件，并设置mode为release
 CMD ["./turnsapi", "-config", "config/config.yaml"]

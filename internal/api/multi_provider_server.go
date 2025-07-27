@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,34 @@ type MultiProviderServer struct {
 // NewMultiProviderServer 创建新的多提供商服务器
 func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *keymanager.MultiGroupKeyManager) *MultiProviderServer {
 	config := configManager.GetConfig()
+
+	log.Printf("=== 开始创建MultiProviderServer ===")
+	log.Printf("配置的服务器模式: '%s', 日志级别: '%s'", config.Server.Mode, config.Logging.Level)
+
+	// 设置Gin模式
+	// 优先使用Server.Mode配置，如果未设置则根据日志级别判断
+	var ginMode string
+	switch config.Server.Mode {
+	case "debug":
+		ginMode = gin.DebugMode
+	case "release":
+		ginMode = gin.ReleaseMode
+	case "test":
+		ginMode = gin.TestMode
+	default:
+		// 向后兼容：如果Mode未设置或无效，则根据日志级别判断
+		if config.Logging.Level == "debug" {
+			ginMode = gin.DebugMode
+		} else {
+			ginMode = gin.ReleaseMode
+		}
+	}
+
+	// 设置环境变量（Gin优先检查环境变量）
+	os.Setenv("GIN_MODE", ginMode)
+	gin.SetMode(ginMode)
+	log.Printf("Gin模式设置为: %s", ginMode)
+
 	// 创建请求日志记录器
 	requestLogger, err := logger.NewRequestLogger(config.Database.Path)
 	if err != nil {

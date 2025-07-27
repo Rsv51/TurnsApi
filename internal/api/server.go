@@ -43,10 +43,21 @@ type Server struct {
 // NewServer 创建新的HTTP服务器
 func NewServer(config *internal.Config, keyManager *keymanager.KeyManager) *Server {
 	// 设置Gin模式
-	if config.Logging.Level == "debug" {
+	// 优先使用Server.Mode配置，如果未设置则根据日志级别判断
+	switch config.Server.Mode {
+	case "debug":
 		gin.SetMode(gin.DebugMode)
-	} else {
+	case "release":
 		gin.SetMode(gin.ReleaseMode)
+	case "test":
+		gin.SetMode(gin.TestMode)
+	default:
+		// 向后兼容：如果Mode未设置或无效，则根据日志级别判断
+		if config.Logging.Level == "debug" {
+			gin.SetMode(gin.DebugMode)
+		} else {
+			gin.SetMode(gin.ReleaseMode)
+		}
 	}
 
 	// 创建请求日志记录器
