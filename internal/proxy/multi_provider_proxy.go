@@ -212,8 +212,15 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 	// 应用分组的请求参数覆盖
 	req.ApplyRequestParams(routeResult.ProviderConfig.RequestParams)
 
+	// 应用模型名称映射
+	originalModel := req.Model
+	req.Model = p.providerRouter.ResolveModelName(req.Model, routeResult.GroupID)
+
 	// 发送请求到提供商
 	response, err := routeResult.Provider.ChatCompletion(ctx, req)
+
+	// 恢复原始模型名称用于日志记录
+	req.Model = originalModel
 	if err != nil {
 		log.Printf("Provider request failed: %v", err)
 		p.keyManager.ReportError(routeResult.GroupID, apiKey, err.Error())
@@ -279,6 +286,10 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 	// 应用分组的请求参数覆盖
 	req.ApplyRequestParams(routeResult.ProviderConfig.RequestParams)
 
+	// 应用模型名称映射
+	originalModel := req.Model
+	req.Model = p.providerRouter.ResolveModelName(req.Model, routeResult.GroupID)
+
 	// 设置流式响应头
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -287,6 +298,9 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 
 	// 获取流式响应
 	streamChan, err := routeResult.Provider.ChatCompletionStream(ctx, req)
+
+	// 恢复原始模型名称用于日志记录
+	req.Model = originalModel
 	if err != nil {
 		log.Printf("Provider streaming request failed: %v", err)
 		p.keyManager.ReportError(routeResult.GroupID, apiKey, err.Error())
@@ -493,6 +507,14 @@ func (p *MultiProviderProxy) handleGroupModels(c *gin.Context, groupID string) {
 	// 标准化模型数据格式
 	standardizedModels := p.standardizeModelsResponse(rawModels, group.ProviderType)
 
+	// 添加模型别名到模型列表中
+	var enhancedModels interface{}
+	if modelSlice, ok := standardizedModels.([]map[string]interface{}); ok {
+		enhancedModels = p.addModelAliases(modelSlice, groupID)
+	} else {
+		enhancedModels = standardizedModels
+	}
+
 	// 为了与前端期望的格式一致，将单个提供商的响应包装成与所有提供商相同的格式
 	response := gin.H{
 		"object": "list",
@@ -500,7 +522,7 @@ func (p *MultiProviderProxy) handleGroupModels(c *gin.Context, groupID string) {
 			groupID: map[string]interface{}{
 				"group_name":    group.Name,
 				"provider_type": group.ProviderType,
-				"models":        standardizedModels,
+				"models":        enhancedModels,
 			},
 		},
 	}
@@ -557,11 +579,19 @@ func (p *MultiProviderProxy) handleAllModels(c *gin.Context) {
 		// 标准化模型数据格式
 		standardizedModels := p.standardizeModelsResponse(rawModels, group.ProviderType)
 
+		// 添加模型别名到模型列表中
+		var enhancedModels interface{}
+		if modelSlice, ok := standardizedModels.([]map[string]interface{}); ok {
+			enhancedModels = p.addModelAliases(modelSlice, groupID)
+		} else {
+			enhancedModels = standardizedModels
+		}
+
 		// 添加到结果中
 		allModels[groupID] = map[string]interface{}{
 			"group_name":    group.Name,
 			"provider_type": group.ProviderType,
-			"models":        standardizedModels,
+			"models":        enhancedModels,
 		}
 	}
 
@@ -710,4 +740,85 @@ func (p *MultiProviderProxy) getProviderGroup(c *gin.Context, model string) stri
 
 	// 默认返回空字符串
 	return ""
+}
+
+// addModelAliases 为模型列表添加别名信息
+func (p *MultiProviderProxy) addModelAliases(models []map[string]interface{}, groupID string) []map[string]interface{} {
+	group, exists := p.config.UserGroups[groupID]
+	if !exists || len(group.ModelMappings) == 0 {
+		return models
+	}
+
+	var enhancedModels []map[string]interface{}
+
+	// 处理每个原始模型
+	for _, model := range models {
+		modelID, ok := model["id"].(string)
+		if !ok {
+			enhancedModels = append(enhancedModels, model)
+			continue
+		}
+
+		// 检查是否有别名映射到这个原始模型
+		var aliases []string
+		for alias, originalModel := range group.ModelMappings {
+			if originalModel == modelID {
+				aliases = append(aliases, alias)
+			}
+		}
+
+		if len(aliases) > 0 {
+			// 如果有别名，为每个别名创建条目
+			for _, alias := range aliases {
+				aliasModel := make(map[string]interface{})
+				for k, v := range model {
+					aliasModel[k] = v
+				}
+				aliasModel["id"] = alias
+				aliasModel["original_model"] = modelID
+				aliasModel["is_alias"] = true
+				enhancedModels = append(enhancedModels, aliasModel)
+			}
+
+			// 也保留原始模型，但标记它有别名
+			originalModel := make(map[string]interface{})
+			for k, v := range model {
+				originalModel[k] = v
+			}
+			originalModel["has_aliases"] = aliases
+			originalModel["is_original"] = true
+			enhancedModels = append(enhancedModels, originalModel)
+		} else {
+			// 没有别名的模型直接添加
+			enhancedModels = append(enhancedModels, model)
+		}
+	}
+
+	// 添加那些没有对应原始模型的别名（可能是跨分组映射）
+	for alias, originalModel := range group.ModelMappings {
+		// 检查原始模型是否在当前模型列表中
+		found := false
+		for _, model := range models {
+			if modelID, ok := model["id"].(string); ok && modelID == originalModel {
+				found = true
+				break
+			}
+		}
+
+		// 如果原始模型不在当前列表中，创建一个别名条目
+		if !found {
+			aliasModel := map[string]interface{}{
+				"id":             alias,
+				"object":         "model",
+				"created":        0,
+				"owned_by":       "alias",
+				"original_model": originalModel,
+				"is_alias":       true,
+				"cross_group":    true, // 标记为跨分组映射
+			}
+			enhancedModels = append(enhancedModels, aliasModel)
+		}
+	}
+
+	return enhancedModels
 }

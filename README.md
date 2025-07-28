@@ -6,6 +6,9 @@ TurnsAPI 是一个用 Go 语言开发的高性能多提供商 API 代理服务�
 
 - **多提供商支持**: 支持 OpenAI、Google Gemini、Anthropic Claude、Azure OpenAI 等多个提供商
 - **智能密钥轮询**: 支持轮询、随机和最少使用三种轮询策略
+- **智能路由重试**: 自动故障转移和智能重试机制，提高请求成功率
+- **模型重命名映射**: 支持为不同分组的模型设置别名，统一模型名称管理
+- **JSON参数覆盖**: 支持分组级别的请求参数覆盖（temperature、max_tokens等）
 - **流式响应支持**: 完全支持 Server-Sent Events (SSE) 流式响应
 - **高可用性**: 自动故障转移和重试机制
 - **实时监控**: Web 界面实时监控 API 密钥状态和服务性能
@@ -14,7 +17,7 @@ TurnsAPI 是一个用 Go 语言开发的高性能多提供商 API 代理服务�
 - **安全认证**: 内置用户名密码认证系统，保护 API 和管理界面
 - **错误处理**: 智能错误处理和 API 密钥健康检查
 - **生产就绪**: 支持 release 模式，优化生产环境性能
-- **易于配置**: 基于 YAML 的配置文件
+- **易于配置**: 基于 YAML 的配置文件和Web界面管理
 
 ## 🌐 支持的提供商
 
@@ -159,6 +162,16 @@ user_groups:
       - "gpt-4o"
     headers:
       Content-Type: "application/json"
+    # JSON请求参数覆盖（可选）
+    request_params:
+      temperature: 0.7
+      max_tokens: 2000
+      top_p: 0.9
+    # 模型重命名映射（可选）
+    model_mappings:
+      gpt4: "gpt-4"                    # 将 gpt4 映射到 gpt-4
+      gpt35: "gpt-3.5-turbo"          # 将 gpt35 映射到 gpt-3.5-turbo
+      chatgpt: "gpt-3.5-turbo"        # 将 chatgpt 映射到 gpt-3.5-turbo
 
   # Google Gemini API
   google_gemini:
@@ -200,6 +213,25 @@ user_groups:
 - `round_robin`: 轮询使用密钥
 - `random`: 随机选择密钥
 - `least_used`: 选择使用次数最少的密钥
+
+**高级功能配置：**
+
+1. **JSON请求参数覆盖** (`request_params`)：
+   - 为分组设置默认的请求参数，会覆盖客户端请求中的相应参数
+   - 支持的参数：`temperature`、`max_tokens`、`top_p`、`stop`
+   - 用于统一不同分组的模型行为
+
+2. **模型重命名映射** (`model_mappings`)：
+   - 为分组中的模型设置别名，实现模型名称的统一管理
+   - 格式：`别名: 实际模型名`
+   - 客户端使用别名请求时，系统自动转换为实际模型名
+   - 支持多个别名映射到同一个实际模型
+
+3. **智能路由重试机制**：
+   - 当某个分组连续失败3次后，会被临时阻止5分钟
+   - 系统自动选择失败次数最少的分组进行重试
+   - 成功请求会重置该分组的失败计数
+   - 确保在用户权限范围内进行智能路由
 
 ### 日志配置
 
@@ -263,6 +295,40 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 
 2. **自动路由**：系统会根据模型名称自动选择合适的提供商
 3. **默认分组**：如果未指定，使用第一个启用的分组
+4. **模型别名**：可以使用配置的模型别名，系统自动转换为实际模型名
+
+### 模型重命名功能
+
+如果在分组配置中设置了模型映射，可以使用别名来请求模型：
+
+```bash
+# 假设配置了映射：gpt4 -> gpt-4
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-access-token" \
+  -d '{
+    "model": "gpt4",  # 使用别名，系统自动转换为 gpt-4
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+### JSON参数覆盖功能
+
+分组级别的参数覆盖会自动应用到该分组的所有请求：
+
+```bash
+# 即使客户端设置了 temperature: 1.0，
+# 如果分组配置了 temperature: 0.7，最终会使用 0.7
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-access-token" \
+  -H "X-Provider-Group: openai_official" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "temperature": 1.0  # 会被分组配置覆盖
+  }'
+```
 
 ### 聊天完成 API
 
@@ -344,9 +410,12 @@ http://localhost:8080
 - **分组管理**: 创建、编辑、删除提供商分组
 - **密钥验证**: 实时验证API密钥的有效性
 - **模型测试**: 测试各提供商的模型可用性
+- **模型重命名配置**: 通过Web界面配置模型别名映射
+- **参数覆盖设置**: 可视化配置分组级别的JSON请求参数覆盖
 - **请求日志查看**: 详细的API请求和响应日志记录
 - **统计分析**: API密钥使用统计和模型调用分析
 - **自动刷新功能**: 实时更新状态信息
+- **智能表单**: 下拉选择实际模型名称，避免输入错误
 
 ## 🔍 监控和管理
 
@@ -539,7 +608,15 @@ auth:
 
 ## 📝 更新日志
 
-### v2.0.0 (最新版本)
+### v2.1.0 (最新版本)
+- 🏷️ **模型重命名映射**: 支持为不同分组的模型设置别名，统一模型名称管理
+- ⚙️ **JSON参数覆盖**: 支持分组级别的请求参数覆盖（temperature、max_tokens等）
+- 🔄 **智能路由重试**: 增强的故障转移机制，自动选择最佳分组进行重试
+- 🎯 **智能表单**: Web界面优化，实际模型名称支持下拉选择
+- 💾 **配置持久化**: 模型映射和参数覆盖配置正确保存到数据库
+- 🐛 **Bug修复**: 修复配置数据传递和显示问题
+
+### v2.0.0
 - ✨ **多提供商支持**: 新增对 OpenAI、Google Gemini、Anthropic Claude、Azure OpenAI 等多个提供商的支持
 - 🚀 **生产模式优化**: 添加 `server.mode` 配置，支持 debug/release/test 模式
 - 🔧 **配置升级**: 从单一 OpenRouter 配置升级为多提供商分组配置

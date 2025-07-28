@@ -1,0 +1,33 @@
+<svg width="256" height="256" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    作者: AI
+    描述: 一个风格化的“X”形闪电/科技Logo。
+    特点: 透明背景，可缩放，易于修改颜色。
+  -->
+  <!-- 定义可重用的元素，例如箭头 -->
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="3" refY="3" orient="auto" fill="#3B82F6">
+      <polygon points="0 0, 6 3, 0 6" />
+    </marker>
+  </defs>
+  <!-- Logo主体组合 -->
+  <g id="tech-logo">
+    <!-- 中心X形闪电 (填充，无描边) -->
+    <path fill="#3B82F6" d="M 118 2 L 70 50 L 80 60 L 70 70 L 118 118 L 60 75 L 2 118 L 50 70 L 40 60 L 50 50 L 2 2 L 60 45 Z" />
+    <!-- 右侧电路 -->
+    <g id="right-circuits" fill="none" stroke="#3B82F6" stroke-width="2.5" stroke-linecap="round">
+      <!-- 上方带箭头的线 -->
+      <line x1="72" y1="48" x2="95" y2="30" marker-end="url(#arrowhead)" />
+      <!-- 上方带圆点的曲线 -->
+      <path d="M 75 55 Q 88 55 100 48" />
+      <circle cx="100" cy="48" r="2" fill="#3B82F6" stroke="none" />
+      <!-- 下方带圆点的曲线 -->
+      <path d="M 75 65 Q 88 65 100 72" />
+      <circle cx="100" cy="72" r="2" fill="#3B82F6" stroke="none" />
+      <!-- 下方带箭头的线 -->
+      <line x1="72" y1="72" x2="95" y2="90" marker-end="url(#arrowhead)" />
+    </g>
+    <!-- 左侧电路 (通过水平翻转右侧电路实现完美对称) -->
+    <use href="#right-circuits" transform="translate(120, 0) scale(-1, 1)" />
+  </g>
+</svg>

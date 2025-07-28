@@ -10,17 +10,18 @@ import (
 
 // UserGroup 用户自定义分组配置
 type UserGroup struct {
-	Name             string            `yaml:"name"`
-	ProviderType     string            `yaml:"provider_type"`
-	BaseURL          string            `yaml:"base_url"`
-	Enabled          bool              `yaml:"enabled"`
-	Timeout          time.Duration     `yaml:"timeout"`
-	MaxRetries       int               `yaml:"max_retries"`
-	RotationStrategy string            `yaml:"rotation_strategy"`
-	Models           []string          `yaml:"models"`
-	APIKeys          []string          `yaml:"api_keys"`
-	Headers          map[string]string `yaml:"headers,omitempty"`
+	Name             string                 `yaml:"name"`
+	ProviderType     string                 `yaml:"provider_type"`
+	BaseURL          string                 `yaml:"base_url"`
+	Enabled          bool                   `yaml:"enabled"`
+	Timeout          time.Duration          `yaml:"timeout"`
+	MaxRetries       int                    `yaml:"max_retries"`
+	RotationStrategy string                 `yaml:"rotation_strategy"`
+	Models           []string               `yaml:"models"`
+	APIKeys          []string               `yaml:"api_keys"`
+	Headers          map[string]string      `yaml:"headers,omitempty"`
 	RequestParams    map[string]interface{} `yaml:"request_params,omitempty"` // JSON请求参数覆盖
+	ModelMappings    map[string]string      `yaml:"model_mappings,omitempty"` // 模型名称映射：别名 -> 原始模型名
 }
 
 // GlobalSettings 全局设置

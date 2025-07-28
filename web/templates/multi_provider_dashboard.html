@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -831,6 +832,72 @@
                             </div>
                         </div>
 
+                        <!-- 模型重命名配置 -->
+                        <div class="md:col-span-2 mt-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <h4 class="font-semibold">模型重命名配置（可选）</h4>
+                                <button type="button" @click="showModelMappingHelp = !showModelMappingHelp" class="text-gray-400 hover:text-gray-600">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <!-- 帮助信息 -->
+                            <div x-show="showModelMappingHelp" x-collapse class="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700">
+                                <p class="mb-2"><strong>模型重命名功能说明：</strong></p>
+                                <ul class="list-disc list-inside space-y-1">
+                                    <li>可以为该分组的模型设置别名，统一不同分组的模型名称</li>
+                                    <li>客户端使用别名请求时，系统会自动转换为实际的模型名称</li>
+                                    <li>例如：将"gpt-4-turbo"重命名为"gpt-4"，客户端可以统一使用"gpt-4"</li>
+                                    <li>支持多个别名映射到同一个实际模型</li>
+                                </ul>
+                            </div>
+
+                            <!-- 模型映射列表 -->
+                            <div class="space-y-2">
+                                <template x-for="(mapping, index) in modelMappings" :key="index">
+                                    <div class="flex items-center space-x-2 p-2 border border-gray-200 rounded-md">
+                                        <div class="flex-1">
+                                            <label class="block text-xs text-gray-500 mb-1">别名（客户端使用）</label>
+                                            <input type="text"
+                                                   x-model="mapping.alias"
+                                                   class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                                   placeholder="例如: gpt-4">
+                                        </div>
+                                        <div class="text-gray-400">→</div>
+                                        <div class="flex-1">
+                                            <label class="block text-xs text-gray-500 mb-1">实际模型名称</label>
+                                            <select x-model="mapping.original"
+                                                    class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                                <option value="">请选择模型</option>
+                                                <template x-for="model in groupFormData.models" :key="model">
+                                                    <option :value="model" :selected="model === mapping.original" x-text="model"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <button type="button"
+                                                @click="removeModelMapping(index)"
+                                                class="text-red-500 hover:text-red-700 p-1">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </template>
+
+                                <!-- 添加新映射按钮 -->
+                                <button type="button"
+                                        @click="addModelMapping()"
+                                        class="w-full py-2 px-4 border-2 border-dashed border-gray-300 rounded-md text-gray-500 hover:border-gray-400 hover:text-gray-600 transition-colors">
+                                    <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                                    </svg>
+                                    添加模型重命名
+                                </button>
+                            </div>
+                        </div>
+
                         <!-- JSON请求参数覆盖 -->
                         <div class="md:col-span-2 mt-4">
                             <div class="flex justify-between items-center mb-2">
@@ -1284,6 +1351,10 @@
                 showRequestParamsHelp: false,
                 requestParamsValidationMessage: '',
                 requestParamsValidationError: false,
+
+                // 模型重命名相关
+                modelMappings: [],
+                showModelMappingHelp: false,
 
                 // 计算属性
                 get providerPageOffset() {
@@ -1836,6 +1907,20 @@
                             this.requestParamsText = '';
                         }
 
+                        // 加载模型映射
+                        this.modelMappings = [];
+                        if (fullGroupData.model_mappings && Object.keys(fullGroupData.model_mappings).length > 0) {
+                            for (const [alias, original] of Object.entries(fullGroupData.model_mappings)) {
+                                this.modelMappings.push({ alias: alias, original: original });
+                            }
+                        }
+
+                        // 使用setTimeout确保所有数据都已经设置完成
+                        setTimeout(() => {
+                            // 强制触发响应式更新
+                            this.modelMappings = [...this.modelMappings];
+                        }, 100);
+
                         this.selectedKeys = [];
                         this.keyPage = 1;
                         this.availableModels = [];
@@ -1931,6 +2016,15 @@
                             this.groupFormData.request_params = {};
                         }
 
+                        // 处理模型映射
+                        const modelMappings = {};
+                        for (const mapping of this.modelMappings) {
+                            if (mapping.alias && mapping.alias.trim() && mapping.original && mapping.original.trim()) {
+                                modelMappings[mapping.alias.trim()] = mapping.original.trim();
+                            }
+                        }
+                        this.groupFormData.model_mappings = modelMappings;
+
                         const url = this.showCreateGroupModal ? '/admin/groups' : `/admin/groups/${this.editingGroupId}`;
                         const method = this.showCreateGroupModal ? 'POST' : 'PUT';
 
@@ -1995,6 +2089,10 @@
                     this.showRequestParamsHelp = false;
                     this.requestParamsValidationMessage = '';
                     this.requestParamsValidationError = false;
+
+                    // 重置模型映射相关字段
+                    this.modelMappings = [];
+                    this.showModelMappingHelp = false;
                 },
 
                 // 提供商类型变化时自动填充Base URL
@@ -2483,6 +2581,16 @@
                         this.requestParamsValidationMessage = 'JSON格式错误: ' + e.message;
                         this.requestParamsValidationError = true;
                     }
+                },
+
+                // 添加模型映射
+                addModelMapping() {
+                    this.modelMappings.push({ alias: '', original: '' });
+                },
+
+                // 移除模型映射
+                removeModelMapping(index) {
+                    this.modelMappings.splice(index, 1);
                 },
 
                 showMessage(msg, type = 'success') {

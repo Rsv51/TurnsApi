@@ -224,14 +224,29 @@ func (pr *ProviderRouter) GetGroupsForModel(modelName string, allowedGroups []st
 			continue
 		}
 
-		// 检查是否明确支持该模型
+		// 检查是否明确支持该模型（原始模型名称）
+		modelSupported := false
 		if len(group.Models) > 0 {
 			for _, model := range group.Models {
 				if model == modelName {
-					candidateGroups = append(candidateGroups, groupID)
+					modelSupported = true
 					break
 				}
 			}
+		}
+
+		// 检查是否有别名映射到该模型
+		if !modelSupported {
+			for alias, actualModel := range group.ModelMappings {
+				if alias == modelName || actualModel == modelName {
+					modelSupported = true
+					break
+				}
+			}
+		}
+
+		if modelSupported {
+			candidateGroups = append(candidateGroups, groupID)
 		}
 	}
 
@@ -281,6 +296,46 @@ func (pr *ProviderRouter) getAccessibleGroups(allowedGroups []string) []string {
 	}
 
 	return accessibleGroups
+}
+
+// ResolveModelName 解析模型名称，将别名转换为实际的模型名称
+func (pr *ProviderRouter) ResolveModelName(modelName, groupID string) string {
+	if group, exists := pr.config.UserGroups[groupID]; exists {
+		// 检查是否有模型映射
+		if actualModel, hasMapped := group.ModelMappings[modelName]; hasMapped {
+			return actualModel
+		}
+	}
+	// 如果没有映射，返回原始模型名称
+	return modelName
+}
+
+// GetModelAliases 获取分组中所有模型的别名列表（用于前端显示）
+func (pr *ProviderRouter) GetModelAliases(groupID string) []string {
+	if group, exists := pr.config.UserGroups[groupID]; exists {
+		var aliases []string
+
+		// 添加原始模型名称
+		aliases = append(aliases, group.Models...)
+
+		// 添加别名
+		for alias := range group.ModelMappings {
+			aliases = append(aliases, alias)
+		}
+
+		// 去重
+		seen := make(map[string]bool)
+		var uniqueAliases []string
+		for _, alias := range aliases {
+			if !seen[alias] {
+				seen[alias] = true
+				uniqueAliases = append(uniqueAliases, alias)
+			}
+		}
+
+		return uniqueAliases
+	}
+	return []string{}
 }
 
 // sortGroupsByFailureCount 按失败次数对分组进行排序

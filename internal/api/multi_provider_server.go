@@ -203,6 +203,10 @@ func (s *MultiProviderServer) setupRoutes() {
 	s.router.Static("/static", "./web/static")
 	s.router.LoadHTMLGlob("web/templates/*")
 
+	// SVG文件直接访问（用于logo和favicon）
+	s.router.StaticFile("/logo.svg", "./web/templates/logo.svg")
+	s.router.StaticFile("/favicon.svg", "./web/templates/favicon.svg")
+
 	// Web界面（需要Web认证）
 	s.router.GET("/", s.authManager.WebAuthMiddleware(), s.handleIndex)
 	s.router.GET("/dashboard", s.authManager.WebAuthMiddleware(), s.handleMultiProviderDashboard)
@@ -352,6 +356,9 @@ func (s *MultiProviderServer) getModelsForGroup(groupID string, group *internal.
 				"owned_by": s.getOwnerByModelID(modelID),
 			})
 		}
+
+		// 应用模型别名映射
+		models = s.applyModelMappings(models, group)
 		return models
 	}
 
@@ -388,6 +395,8 @@ func (s *MultiProviderServer) getModelsForGroup(groupID string, group *internal.
 		}
 	}
 
+	// 应用模型别名映射
+	models = s.applyModelMappings(models, group)
 	return models
 }
 
@@ -461,6 +470,77 @@ func (s *MultiProviderServer) hasGroupAccess(proxyKey *logger.ProxyKey, groupID 
 	}
 
 	return false
+}
+
+// applyModelMappings 应用模型别名映射到模型列表
+func (s *MultiProviderServer) applyModelMappings(models []map[string]interface{}, group *internal.UserGroup) []map[string]interface{} {
+	if len(group.ModelMappings) == 0 {
+		return models
+	}
+
+	var enhancedModels []map[string]interface{}
+
+	// 处理每个原始模型
+	for _, model := range models {
+		modelID, ok := model["id"].(string)
+		if !ok {
+			enhancedModels = append(enhancedModels, model)
+			continue
+		}
+
+		// 检查是否有别名映射到这个原始模型
+		var aliases []string
+		for alias, originalModel := range group.ModelMappings {
+			if originalModel == modelID {
+				aliases = append(aliases, alias)
+			}
+		}
+
+		if len(aliases) > 0 {
+			// 如果有别名，优先显示别名，隐藏原始模型
+			for _, alias := range aliases {
+				aliasModel := make(map[string]interface{})
+				for k, v := range model {
+					aliasModel[k] = v
+				}
+				aliasModel["id"] = alias
+				aliasModel["original_model"] = modelID
+				aliasModel["is_alias"] = true
+				enhancedModels = append(enhancedModels, aliasModel)
+			}
+		} else {
+			// 没有别名的模型直接添加
+			enhancedModels = append(enhancedModels, model)
+		}
+	}
+
+	// 添加那些没有对应原始模型的别名（可能是跨分组映射）
+	for alias, originalModel := range group.ModelMappings {
+		// 检查原始模型是否在当前模型列表中
+		found := false
+		for _, model := range models {
+			if modelID, ok := model["id"].(string); ok && modelID == originalModel {
+				found = true
+				break
+			}
+		}
+
+		// 如果原始模型不在当前列表中，创建一个别名条目
+		if !found {
+			aliasModel := map[string]interface{}{
+				"id":             alias,
+				"object":         "model",
+				"created":        1640995200,
+				"owned_by":       s.getOwnerByModelID(originalModel),
+				"original_model": originalModel,
+				"is_alias":       true,
+				"cross_group":    true, // 标记为跨分组映射
+			}
+			enhancedModels = append(enhancedModels, aliasModel)
+		}
+	}
+
+	return enhancedModels
 }
 
 
@@ -1757,6 +1837,7 @@ func (s *MultiProviderServer) handleGroupsManage(c *gin.Context) {
 			"models":            group.Models,
 			"headers":           group.Headers,
 			"request_params":    group.RequestParams,
+			"model_mappings":    group.ModelMappings,
 		}
 
 		// 获取健康状态，如果没有健康检查记录则默认为健康
@@ -1797,6 +1878,7 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 		Models           []string               `json:"models"`
 		Headers          map[string]string      `json:"headers"`
 		RequestParams    map[string]interface{} `json:"request_params"`
+		ModelMappings    map[string]string      `json:"model_mappings"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1853,6 +1935,9 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 	if req.RequestParams == nil {
 		req.RequestParams = make(map[string]interface{})
 	}
+	if req.ModelMappings == nil {
+		req.ModelMappings = make(map[string]string)
+	}
 
 	// 创建新的用户分组
 	newGroup := &internal.UserGroup{
@@ -1867,7 +1952,10 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 		Models:           req.Models,
 		Headers:          req.Headers,
 		RequestParams:    req.RequestParams,
+		ModelMappings:    req.ModelMappings,
 	}
+
+
 
 	// 保存到配置管理器（会同时更新数据库和内存）
 	if err := s.configManager.SaveGroup(req.GroupID, newGroup); err != nil {
@@ -1920,6 +2008,7 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 		Models           []string               `json:"models"`
 		Headers          map[string]string      `json:"headers"`
 		RequestParams    map[string]interface{} `json:"request_params"`
+		ModelMappings    map[string]string      `json:"model_mappings"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1929,6 +2018,8 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 		})
 		return
 	}
+
+
 
 	// 更新字段（只更新提供的字段）
 	if req.Name != "" {
@@ -1981,6 +2072,11 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 	if req.RequestParams != nil {
 		existingGroup.RequestParams = req.RequestParams
 	}
+	if req.ModelMappings != nil {
+		existingGroup.ModelMappings = req.ModelMappings
+	}
+
+
 
 	// 保存到配置管理器
 	if err := s.configManager.UpdateGroup(groupID, existingGroup); err != nil {

@@ -21,6 +21,8 @@ func toDBUserGroup(group *UserGroup) *database.UserGroup {
 		APIKeys:          group.APIKeys,
 		Models:           group.Models,
 		Headers:          group.Headers,
+		RequestParams:    group.RequestParams,
+		ModelMappings:    group.ModelMappings,
 	}
 }
 
@@ -37,6 +39,8 @@ func fromDBUserGroup(dbGroup *database.UserGroup) *UserGroup {
 		APIKeys:          dbGroup.APIKeys,
 		Models:           dbGroup.Models,
 		Headers:          dbGroup.Headers,
+		RequestParams:    dbGroup.RequestParams,
+		ModelMappings:    dbGroup.ModelMappings,
 	}
 }
 
