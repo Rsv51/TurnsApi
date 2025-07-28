@@ -37,6 +37,52 @@ type ChatCompletionRequest struct {
 	Stop        []string      `json:"stop,omitempty"`
 }
 
+// ApplyRequestParams 应用请求参数覆盖
+func (req *ChatCompletionRequest) ApplyRequestParams(params map[string]interface{}) {
+	if params == nil {
+		return
+	}
+
+	// 应用温度参数
+	if temp, ok := params["temperature"]; ok {
+		if tempFloat, ok := temp.(float64); ok {
+			req.Temperature = &tempFloat
+		}
+	}
+
+	// 应用最大token数
+	if maxTokens, ok := params["max_tokens"]; ok {
+		if maxTokensFloat, ok := maxTokens.(float64); ok {
+			maxTokensInt := int(maxTokensFloat)
+			req.MaxTokens = &maxTokensInt
+		} else if maxTokensInt, ok := maxTokens.(int); ok {
+			req.MaxTokens = &maxTokensInt
+		}
+	}
+
+	// 应用top_p参数
+	if topP, ok := params["top_p"]; ok {
+		if topPFloat, ok := topP.(float64); ok {
+			req.TopP = &topPFloat
+		}
+	}
+
+	// 应用stop参数
+	if stop, ok := params["stop"]; ok {
+		if stopSlice, ok := stop.([]interface{}); ok {
+			stopStrings := make([]string, 0, len(stopSlice))
+			for _, s := range stopSlice {
+				if str, ok := s.(string); ok {
+					stopStrings = append(stopStrings, str)
+				}
+			}
+			req.Stop = stopStrings
+		} else if stopSlice, ok := stop.([]string); ok {
+			req.Stop = stopSlice
+		}
+	}
+}
+
 // ChatCompletionResponse 聊天完成响应结构
 type ChatCompletionResponse struct {
 	ID      string `json:"id"`
@@ -73,6 +119,7 @@ type ProviderConfig struct {
 	MaxRetries       int
 	Headers          map[string]string
 	ProviderType     string
+	RequestParams    map[string]interface{} // JSON请求参数覆盖
 }
 
 // Provider 提供商接口

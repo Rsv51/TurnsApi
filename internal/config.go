@@ -20,6 +20,7 @@ type UserGroup struct {
 	Models           []string          `yaml:"models"`
 	APIKeys          []string          `yaml:"api_keys"`
 	Headers          map[string]string `yaml:"headers,omitempty"`
+	RequestParams    map[string]interface{} `yaml:"request_params,omitempty"` // JSON请求参数覆盖
 }
 
 // GlobalSettings 全局设置

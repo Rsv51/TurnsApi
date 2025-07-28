@@ -22,6 +22,7 @@ type UserGroup struct {
 	APIKeys          []string          `yaml:"api_keys" json:"api_keys"`
 	Models           []string          `yaml:"models,omitempty" json:"models,omitempty"`
 	Headers          map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	RequestParams    map[string]interface{} `yaml:"request_params,omitempty" json:"request_params,omitempty"` // JSON请求参数覆盖
 }
 
 // GroupsDB 分组数据库管理器
@@ -61,6 +62,7 @@ func (gdb *GroupsDB) initTables() error {
 		rotation_strategy TEXT NOT NULL DEFAULT 'round_robin',
 		models TEXT, -- JSON array of supported models
 		headers TEXT, -- JSON object of custom headers
+		request_params TEXT, -- JSON object of request parameters override
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
@@ -99,6 +101,11 @@ func (gdb *GroupsDB) initTables() error {
 	// 执行数据库迁移，为现有表添加新字段
 	if err := gdb.migrateAPIKeysTable(); err != nil {
 		return fmt.Errorf("failed to migrate provider_api_keys table: %w", err)
+	}
+
+	// 执行数据库迁移，为分组表添加request_params字段
+	if err := gdb.migrateRequestParamsField(); err != nil {
+		return fmt.Errorf("failed to migrate request_params field: %w", err)
 	}
 
 	// 创建索引
@@ -165,6 +172,51 @@ func (gdb *GroupsDB) migrateAPIKeysTable() error {
 	return nil
 }
 
+// migrateRequestParamsField 迁移分组表，添加request_params字段
+func (gdb *GroupsDB) migrateRequestParamsField() error {
+	// 检查字段是否已存在
+	checkColumnSQL := `PRAGMA table_info(provider_groups);`
+	rows, err := gdb.db.Query(checkColumnSQL)
+	if err != nil {
+		return fmt.Errorf("failed to check table info: %w", err)
+	}
+	defer rows.Close()
+
+	existingColumns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, pk int
+		var defaultValue interface{}
+
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("failed to scan column info: %w", err)
+		}
+		existingColumns[name] = true
+	}
+
+	var migrations []string
+
+	// 检查并添加request_params字段
+	if !existingColumns["request_params"] {
+		migrations = append(migrations, "ALTER TABLE provider_groups ADD COLUMN request_params TEXT DEFAULT NULL;")
+	}
+
+	// 执行迁移
+	for _, migration := range migrations {
+		if _, err := gdb.db.Exec(migration); err != nil {
+			return fmt.Errorf("failed to execute migration '%s': %w", migration, err)
+		}
+		log.Printf("Executed migration: %s", migration)
+	}
+
+	if len(migrations) > 0 {
+		log.Printf("Provider groups table migration completed, added %d new columns", len(migrations))
+	}
+
+	return nil
+}
+
 // UpdateAPIKeyValidation 更新API密钥的验证状态
 func (gdb *GroupsDB) UpdateAPIKeyValidation(groupID, apiKey string, isValid bool, validationError string) error {
 	updateSQL := `
@@ -226,7 +278,7 @@ func (gdb *GroupsDB) SaveGroup(groupID string, group *UserGroup) error {
 	}
 	defer tx.Rollback()
 
-	// 序列化models和headers为JSON
+	// 序列化models、headers和request_params为JSON
 	modelsJSON, err := json.Marshal(group.Models)
 	if err != nil {
 		return fmt.Errorf("failed to marshal models: %w", err)
@@ -237,12 +289,17 @@ func (gdb *GroupsDB) SaveGroup(groupID string, group *UserGroup) error {
 		return fmt.Errorf("failed to marshal headers: %w", err)
 	}
 
+	requestParamsJSON, err := json.Marshal(group.RequestParams)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request_params: %w", err)
+	}
+
 	// 插入或更新分组信息
 	upsertGroupSQL := `
 	INSERT INTO provider_groups (
 		group_id, name, provider_type, base_url, enabled,
-		timeout_seconds, max_retries, rotation_strategy, models, headers, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		timeout_seconds, max_retries, rotation_strategy, models, headers, request_params, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	ON CONFLICT(group_id) DO UPDATE SET
 		name = excluded.name,
 		provider_type = excluded.provider_type,
@@ -253,12 +310,13 @@ func (gdb *GroupsDB) SaveGroup(groupID string, group *UserGroup) error {
 		rotation_strategy = excluded.rotation_strategy,
 		models = excluded.models,
 		headers = excluded.headers,
+		request_params = excluded.request_params,
 		updated_at = CURRENT_TIMESTAMP;`
 
 	_, err = tx.Exec(upsertGroupSQL,
 		groupID, group.Name, group.ProviderType, group.BaseURL,
 		group.Enabled, int(group.Timeout.Seconds()), group.MaxRetries,
-		group.RotationStrategy, string(modelsJSON), string(headersJSON))
+		group.RotationStrategy, string(modelsJSON), string(headersJSON), string(requestParamsJSON))
 	if err != nil {
 		return fmt.Errorf("failed to save group: %w", err)
 	}
@@ -289,17 +347,18 @@ func (gdb *GroupsDB) LoadGroup(groupID string) (*UserGroup, error) {
 	// 查询分组信息
 	groupSQL := `
 	SELECT name, provider_type, base_url, enabled,
-		   timeout_seconds, max_retries, rotation_strategy, models, headers
+		   timeout_seconds, max_retries, rotation_strategy, models, headers, request_params
 	FROM provider_groups WHERE group_id = ?`
 
 	var group UserGroup
 	var modelsJSON, headersJSON string
+	var requestParamsJSON *string // 使用指针来处理NULL值
 	var timeoutSeconds int
 
 	err := gdb.db.QueryRow(groupSQL, groupID).Scan(
 		&group.Name, &group.ProviderType, &group.BaseURL,
 		&group.Enabled, &timeoutSeconds, &group.MaxRetries, &group.RotationStrategy,
-		&modelsJSON, &headersJSON)
+		&modelsJSON, &headersJSON, &requestParamsJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("group not found: %s", groupID)
@@ -310,13 +369,22 @@ func (gdb *GroupsDB) LoadGroup(groupID string) (*UserGroup, error) {
 	// 设置超时时间
 	group.Timeout = time.Duration(timeoutSeconds) * time.Second
 
-	// 反序列化models和headers
+	// 反序列化models、headers和request_params
 	if err = json.Unmarshal([]byte(modelsJSON), &group.Models); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal models: %w", err)
 	}
 
 	if err = json.Unmarshal([]byte(headersJSON), &group.Headers); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal headers: %w", err)
+	}
+
+	// 处理request_params，可能为NULL
+	if requestParamsJSON != nil && *requestParamsJSON != "" && *requestParamsJSON != "null" {
+		if err = json.Unmarshal([]byte(*requestParamsJSON), &group.RequestParams); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal request_params: %w", err)
+		}
+	} else {
+		group.RequestParams = make(map[string]interface{})
 	}
 
 	// 查询API密钥
@@ -345,7 +413,7 @@ func (gdb *GroupsDB) LoadAllGroups() (map[string]*UserGroup, error) {
 	// 查询所有分组
 	groupsSQL := `
 	SELECT group_id, name, provider_type, base_url, enabled,
-		   timeout_seconds, max_retries, rotation_strategy, models, headers
+		   timeout_seconds, max_retries, rotation_strategy, models, headers, request_params
 	FROM provider_groups ORDER BY created_at DESC`
 
 	rows, err := gdb.db.Query(groupsSQL)
@@ -360,11 +428,12 @@ func (gdb *GroupsDB) LoadAllGroups() (map[string]*UserGroup, error) {
 		var groupID string
 		var group UserGroup
 		var modelsJSON, headersJSON string
+		var requestParamsJSON *string // 使用指针来处理NULL值
 		var timeoutSeconds int
 
 		err = rows.Scan(&groupID, &group.Name, &group.ProviderType, &group.BaseURL,
 			&group.Enabled, &timeoutSeconds, &group.MaxRetries,
-			&group.RotationStrategy, &modelsJSON, &headersJSON)
+			&group.RotationStrategy, &modelsJSON, &headersJSON, &requestParamsJSON)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
 		}
@@ -372,7 +441,7 @@ func (gdb *GroupsDB) LoadAllGroups() (map[string]*UserGroup, error) {
 		// 设置超时时间
 		group.Timeout = time.Duration(timeoutSeconds) * time.Second
 
-		// 反序列化models和headers
+		// 反序列化models、headers和request_params
 		if err = json.Unmarshal([]byte(modelsJSON), &group.Models); err != nil {
 			log.Printf("警告: 分组 %s 的models反序列化失败: %v", groupID, err)
 			group.Models = []string{}
@@ -381,6 +450,16 @@ func (gdb *GroupsDB) LoadAllGroups() (map[string]*UserGroup, error) {
 		if err = json.Unmarshal([]byte(headersJSON), &group.Headers); err != nil {
 			log.Printf("警告: 分组 %s 的headers反序列化失败: %v", groupID, err)
 			group.Headers = make(map[string]string)
+		}
+
+		// 处理request_params，可能为NULL
+		if requestParamsJSON != nil && *requestParamsJSON != "" && *requestParamsJSON != "null" {
+			if err = json.Unmarshal([]byte(*requestParamsJSON), &group.RequestParams); err != nil {
+				log.Printf("警告: 分组 %s 的request_params反序列化失败: %v", groupID, err)
+				group.RequestParams = make(map[string]interface{})
+			}
+		} else {
+			group.RequestParams = make(map[string]interface{})
 		}
 
 		groups[groupID] = &group

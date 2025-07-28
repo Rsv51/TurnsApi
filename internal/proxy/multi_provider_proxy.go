@@ -114,42 +114,87 @@ func (p *MultiProviderProxy) HandleChatCompletion(c *gin.Context) {
 		routeReq.ProviderGroup = providerGroup
 	}
 
-	routeResult, err := p.providerRouter.Route(routeReq)
-	if err != nil {
-		log.Printf("Failed to route request: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
+	// 使用智能路由重试机制
+	success := p.handleRequestWithRetry(c, &req, routeReq, startTime)
+	if !success {
+		// 如果所有重试都失败了，返回错误
+		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
-				"message": fmt.Sprintf("No suitable provider found: %v", err),
-				"type":    "invalid_request_error",
-				"code":    "no_provider",
-			},
-		})
-		return
-	}
-
-	// 获取API密钥
-	apiKey, err := p.keyManager.GetNextKeyForGroup(routeResult.GroupID)
-	if err != nil {
-		log.Printf("Failed to get API key for group %s: %v", routeResult.GroupID, err)
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": gin.H{
-				"message": "No available API keys",
+				"message": "All provider groups failed to process the request",
 				"type":    "service_unavailable",
-				"code":    "no_api_keys",
+				"code":    "all_providers_failed",
 			},
 		})
-		return
+	}
+}
+
+// handleRequestWithRetry 处理请求并支持智能重试
+func (p *MultiProviderProxy) handleRequestWithRetry(
+	c *gin.Context,
+	req *providers.ChatCompletionRequest,
+	routeReq *router.RouteRequest,
+	startTime time.Time,
+) bool {
+	const maxRetries = 3
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// 获取路由结果
+		routeResult, err := p.providerRouter.RouteWithRetry(routeReq)
+		if err != nil {
+			log.Printf("Failed to route request (attempt %d/%d): %v", attempt+1, maxRetries, err)
+			if attempt == maxRetries-1 {
+				// 最后一次尝试失败
+				return false
+			}
+			continue
+		}
+
+		// 获取API密钥
+		apiKey, err := p.keyManager.GetNextKeyForGroup(routeResult.GroupID)
+		if err != nil {
+			log.Printf("Failed to get API key for group %s (attempt %d/%d): %v", routeResult.GroupID, attempt+1, maxRetries, err)
+			// 报告失败
+			p.providerRouter.ReportFailure(req.Model, routeResult.GroupID)
+			if attempt == maxRetries-1 {
+				return false
+			}
+			continue
+		}
+
+		// 更新提供商配置中的API密钥
+		p.providerRouter.UpdateProviderConfig(routeResult.ProviderConfig, apiKey)
+
+		// 尝试处理请求
+		var success bool
+		if req.Stream {
+			success = p.handleStreamingRequestWithRetry(c, req, routeResult, apiKey, startTime)
+		} else {
+			success = p.handleNonStreamingRequestWithRetry(c, req, routeResult, apiKey, startTime)
+		}
+
+		if success {
+			// 报告成功
+			p.providerRouter.ReportSuccess(req.Model, routeResult.GroupID)
+			return true
+		} else {
+			// 报告失败
+			p.providerRouter.ReportFailure(req.Model, routeResult.GroupID)
+			log.Printf("Request failed for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
+		}
 	}
 
-	// 更新提供商配置中的API密钥
-	p.providerRouter.UpdateProviderConfig(routeResult.ProviderConfig, apiKey)
+	return false
+}
 
-	// 处理请求
-	if req.Stream {
-		p.handleStreamingRequest(c, &req, routeResult, apiKey, startTime)
-	} else {
-		p.handleNonStreamingRequest(c, &req, routeResult, apiKey, startTime)
-	}
+// handleNonStreamingRequestWithRetry 处理非流式请求（支持重试）
+func (p *MultiProviderProxy) handleNonStreamingRequestWithRetry(
+	c *gin.Context,
+	req *providers.ChatCompletionRequest,
+	routeResult *router.RouteResult,
+	apiKey string,
+	startTime time.Time,
+) bool {
+	return p.handleNonStreamingRequest(c, req, routeResult, apiKey, startTime)
 }
 
 // handleNonStreamingRequest 处理非流式请求
@@ -159,10 +204,13 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 	routeResult *router.RouteResult,
 	apiKey string,
 	startTime time.Time,
-) {
+) bool {
 	// 创建带有长超时的context，避免请求超时
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
+
+	// 应用分组的请求参数覆盖
+	req.ApplyRequestParams(routeResult.ProviderConfig.RequestParams)
 
 	// 发送请求到提供商
 	response, err := routeResult.Provider.ChatCompletion(ctx, req)
@@ -185,7 +233,7 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 				"code":    "upstream_error",
 			},
 		})
-		return
+		return false
 	}
 
 	// 报告成功
@@ -202,6 +250,18 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 
 	// 返回响应
 	c.JSON(http.StatusOK, response)
+	return true
+}
+
+// handleStreamingRequestWithRetry 处理流式请求（支持重试）
+func (p *MultiProviderProxy) handleStreamingRequestWithRetry(
+	c *gin.Context,
+	req *providers.ChatCompletionRequest,
+	routeResult *router.RouteResult,
+	apiKey string,
+	startTime time.Time,
+) bool {
+	return p.handleStreamingRequest(c, req, routeResult, apiKey, startTime)
 }
 
 // handleStreamingRequest 处理流式请求
@@ -211,10 +271,13 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 	routeResult *router.RouteResult,
 	apiKey string,
 	startTime time.Time,
-) {
+) bool {
 	// 创建带有长超时的context，避免流式请求超时
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
+
+	// 应用分组的请求参数覆盖
+	req.ApplyRequestParams(routeResult.ProviderConfig.RequestParams)
 
 	// 设置流式响应头
 	c.Header("Content-Type", "text/event-stream")
@@ -243,7 +306,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 				"code":    "upstream_error",
 			},
 		})
-		return
+		return false
 	}
 
 	// 获取响应写入器
@@ -257,7 +320,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 				"type":    "internal_error",
 			},
 		})
-		return
+		return false
 	}
 
 	// 处理流式数据
@@ -292,7 +355,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 	// 如果接收到数据，报告成功
 	if hasData {
 		p.keyManager.ReportSuccess(routeResult.GroupID, apiKey)
-		
+
 		// 记录成功日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
@@ -300,7 +363,10 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 			clientIP := logger.GetClientIP(c)
 			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), string(responseBuffer), clientIP, 200, true, duration, nil)
 		}
+		return true
 	}
+
+	return false
 }
 
 // getProxyKeyInfo 获取代理密钥信息
@@ -383,12 +449,13 @@ func (p *MultiProviderProxy) handleGroupModels(c *gin.Context, groupID string) {
 
 	// 创建提供商配置
 	providerConfig := &providers.ProviderConfig{
-		BaseURL:      group.BaseURL,
-		APIKey:       apiKey,
-		Timeout:      group.Timeout,
-		MaxRetries:   group.MaxRetries,
-		Headers:      group.Headers,
-		ProviderType: group.ProviderType,
+		BaseURL:       group.BaseURL,
+		APIKey:        apiKey,
+		Timeout:       group.Timeout,
+		MaxRetries:    group.MaxRetries,
+		Headers:       group.Headers,
+		ProviderType:  group.ProviderType,
+		RequestParams: group.RequestParams,
 	}
 
 	// 获取提供商实例
@@ -459,12 +526,13 @@ func (p *MultiProviderProxy) handleAllModels(c *gin.Context) {
 
 		// 创建提供商配置
 		providerConfig := &providers.ProviderConfig{
-			BaseURL:      group.BaseURL,
-			APIKey:       apiKey,
-			Timeout:      group.Timeout,
-			MaxRetries:   group.MaxRetries,
-			Headers:      group.Headers,
-			ProviderType: group.ProviderType,
+			BaseURL:       group.BaseURL,
+			APIKey:        apiKey,
+			Timeout:       group.Timeout,
+			MaxRetries:    group.MaxRetries,
+			Headers:       group.Headers,
+			ProviderType:  group.ProviderType,
+			RequestParams: group.RequestParams,
 		}
 
 		// 获取提供商实例

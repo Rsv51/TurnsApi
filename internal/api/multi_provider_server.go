@@ -1756,6 +1756,7 @@ func (s *MultiProviderServer) handleGroupsManage(c *gin.Context) {
 			"api_keys":          group.APIKeys,
 			"models":            group.Models,
 			"headers":           group.Headers,
+			"request_params":    group.RequestParams,
 		}
 
 		// 获取健康状态，如果没有健康检查记录则默认为健康
@@ -1784,17 +1785,18 @@ func (s *MultiProviderServer) handleGroupsManage(c *gin.Context) {
 // handleCreateGroup 处理创建分组
 func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 	var req struct {
-		GroupID          string            `json:"group_id" binding:"required"`
-		Name             string            `json:"name" binding:"required"`
-		ProviderType     string            `json:"provider_type" binding:"required"`
-		BaseURL          string            `json:"base_url" binding:"required"`
-		Enabled          bool              `json:"enabled"`
-		Timeout          float64           `json:"timeout"`
-		MaxRetries       int               `json:"max_retries"`
-		RotationStrategy string            `json:"rotation_strategy"`
-		APIKeys          []string          `json:"api_keys"`
-		Models           []string          `json:"models"`
-		Headers          map[string]string `json:"headers"`
+		GroupID          string                 `json:"group_id" binding:"required"`
+		Name             string                 `json:"name" binding:"required"`
+		ProviderType     string                 `json:"provider_type" binding:"required"`
+		BaseURL          string                 `json:"base_url" binding:"required"`
+		Enabled          bool                   `json:"enabled"`
+		Timeout          float64                `json:"timeout"`
+		MaxRetries       int                    `json:"max_retries"`
+		RotationStrategy string                 `json:"rotation_strategy"`
+		APIKeys          []string               `json:"api_keys"`
+		Models           []string               `json:"models"`
+		Headers          map[string]string      `json:"headers"`
+		RequestParams    map[string]interface{} `json:"request_params"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1848,6 +1850,9 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 	if req.Headers["Content-Type"] == "" {
 		req.Headers["Content-Type"] = "application/json"
 	}
+	if req.RequestParams == nil {
+		req.RequestParams = make(map[string]interface{})
+	}
 
 	// 创建新的用户分组
 	newGroup := &internal.UserGroup{
@@ -1861,6 +1866,7 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 		APIKeys:          req.APIKeys,
 		Models:           req.Models,
 		Headers:          req.Headers,
+		RequestParams:    req.RequestParams,
 	}
 
 	// 保存到配置管理器（会同时更新数据库和内存）
@@ -1903,16 +1909,17 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 	}
 
 	var req struct {
-		Name             string            `json:"name"`
-		ProviderType     string            `json:"provider_type"`
-		BaseURL          string            `json:"base_url"`
-		Enabled          *bool             `json:"enabled"`
-		Timeout          *float64          `json:"timeout"`
-		MaxRetries       *int              `json:"max_retries"`
-		RotationStrategy string            `json:"rotation_strategy"`
-		APIKeys          []string          `json:"api_keys"`
-		Models           []string          `json:"models"`
-		Headers          map[string]string `json:"headers"`
+		Name             string                 `json:"name"`
+		ProviderType     string                 `json:"provider_type"`
+		BaseURL          string                 `json:"base_url"`
+		Enabled          *bool                  `json:"enabled"`
+		Timeout          *float64               `json:"timeout"`
+		MaxRetries       *int                   `json:"max_retries"`
+		RotationStrategy string                 `json:"rotation_strategy"`
+		APIKeys          []string               `json:"api_keys"`
+		Models           []string               `json:"models"`
+		Headers          map[string]string      `json:"headers"`
+		RequestParams    map[string]interface{} `json:"request_params"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1970,6 +1977,9 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 	}
 	if req.Headers != nil {
 		existingGroup.Headers = req.Headers
+	}
+	if req.RequestParams != nil {
+		existingGroup.RequestParams = req.RequestParams
 	}
 
 	// 保存到配置管理器
