@@ -13,6 +13,7 @@ import (
 	"turnsapi/internal/keymanager"
 	"turnsapi/internal/logger"
 	"turnsapi/internal/providers"
+	"turnsapi/internal/ratelimit"
 	"turnsapi/internal/router"
 
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,7 @@ type MultiProviderProxy struct {
 	providerManager *providers.ProviderManager
 	providerRouter  *router.ProviderRouter
 	requestLogger   *logger.RequestLogger
+	rpmLimiter      *ratelimit.RPMLimiter
 }
 
 // NewMultiProviderProxy 创建多提供商代理
@@ -36,9 +38,19 @@ func NewMultiProviderProxy(
 	// 创建提供商管理器
 	factory := providers.NewDefaultProviderFactory()
 	providerManager := providers.NewProviderManager(factory)
-	
+
 	// 创建提供商路由器
 	providerRouter := router.NewProviderRouter(config, providerManager)
+
+	// 创建RPM限制器并初始化分组限制
+	rpmLimiter := ratelimit.NewRPMLimiter()
+	if config.UserGroups != nil {
+		for groupID, group := range config.UserGroups {
+			if group.RPMLimit > 0 {
+				rpmLimiter.SetLimit(groupID, group.RPMLimit)
+			}
+		}
+	}
 
 	return &MultiProviderProxy{
 		config:          config,
@@ -46,12 +58,25 @@ func NewMultiProviderProxy(
 		providerManager: providerManager,
 		providerRouter:  providerRouter,
 		requestLogger:   requestLogger,
+		rpmLimiter:      rpmLimiter,
 	}
 }
 
 // RemoveProvider 从提供商管理器中移除分组
 func (mp *MultiProviderProxy) RemoveProvider(groupID string) {
 	mp.providerManager.RemoveProvider(groupID)
+	// 同时移除RPM限制
+	mp.rpmLimiter.RemoveLimit(groupID)
+}
+
+// UpdateRPMLimit 更新分组的RPM限制
+func (mp *MultiProviderProxy) UpdateRPMLimit(groupID string, limit int) {
+	mp.rpmLimiter.SetLimit(groupID, limit)
+}
+
+// GetRPMStats 获取RPM统计信息
+func (mp *MultiProviderProxy) GetRPMStats() map[string]map[string]int {
+	return mp.rpmLimiter.GetAllStats()
 }
 
 // HandleChatCompletion 处理聊天完成请求
@@ -149,6 +174,26 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 			continue
 		}
 
+		// 检查RPM限制
+		if !p.rpmLimiter.Allow(routeResult.GroupID) {
+			log.Printf("RPM limit exceeded for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
+			// 报告失败（由于限流）
+			p.providerRouter.ReportFailure(req.Model, routeResult.GroupID)
+
+			// 如果是最后一次尝试，返回限流错误
+			if attempt == maxRetries-1 {
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error": gin.H{
+						"message": "Rate limit exceeded for the selected provider group",
+						"type":    "rate_limit_error",
+						"code":    "rpm_limit_exceeded",
+					},
+				})
+				return false
+			}
+			continue
+		}
+
 		// 获取API密钥
 		apiKey, err := p.keyManager.GetNextKeyForGroup(routeResult.GroupID)
 		if err != nil {
@@ -224,7 +269,7 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 	if err != nil {
 		log.Printf("Provider request failed: %v", err)
 		p.keyManager.ReportError(routeResult.GroupID, apiKey, err.Error())
-		
+
 		// 记录错误日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
@@ -232,7 +277,7 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 			clientIP := logger.GetClientIP(c)
 			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), "", clientIP, 502, false, time.Since(startTime), err)
 		}
-		
+
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"message": "Failed to connect to provider",
@@ -304,7 +349,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 	if err != nil {
 		log.Printf("Provider streaming request failed: %v", err)
 		p.keyManager.ReportError(routeResult.GroupID, apiKey, err.Error())
-		
+
 		// 记录错误日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
@@ -312,7 +357,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 			clientIP := logger.GetClientIP(c)
 			p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), "", clientIP, 502, true, time.Since(startTime), err)
 		}
-		
+
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"message": "Failed to connect to provider",
@@ -352,7 +397,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 			hasData = true
 			w.Write(streamResp.Data)
 			flusher.Flush()
-			
+
 			// 收集响应数据用于日志记录（限制大小）
 			if len(responseBuffer) < 10000 {
 				responseBuffer = append(responseBuffer, streamResp.Data...)

@@ -17,15 +17,12 @@
         <!-- Header -->
         <div class="flex justify-between items-center mb-8">
             <div>
-                <h1 class="text-3xl font-bold text-gray-800">TurnsAPI 多提供商仪表板</h1>
-                <p class="text-gray-600">实时监控多个API提供商的状态和性能</p>
+                <h1 class="text-3xl font-bold text-gray-800">TurnsAPI 仪表板</h1>
+                <p class="text-gray-600">管理多个AI提供商的密钥</p>
             </div>
             <div class="flex space-x-4">
                 <a href="/" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition duration-200">
                     返回首页
-                </a>
-                <a href="/groups" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
-                    分组管理
                 </a>
                 <a href="/logs" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition duration-200">
                     请求日志
@@ -153,7 +150,7 @@
                     </div>
                     <div class="flex justify-between text-sm">
                         <span class="text-gray-500">版本信息</span>
-                        <span class="font-medium" x-text="systemHealth.version || 'v2.0.0'">v2.0.0</span>
+                        <span class="font-medium" x-text="systemHealth.version || 'v2.2.0'">v2.2.0</span>
                     </div>
                     <div class="flex justify-between text-sm">
                         <span class="text-gray-500">请求总数</span>
@@ -332,26 +329,26 @@
                                     </div>
                                     <div class="flex items-center space-x-1">
                                         <span class="text-gray-600">密钥:</span>
-                                        <div class="flex items-center space-x-2" x-data="{ keyData: getKeyStatusData(groupId, provider) }">
+                                        <div class="flex items-center space-x-2">
                                             <!-- 总计 -->
-                                            <span class="text-gray-900 font-medium" x-text="keyData.total"></span>
+                                            <span class="text-gray-900 font-medium" x-text="getKeyStatusData(groupId, provider).total"></span>
 
                                             <!-- 有效密钥 -->
                                             <div class="flex items-center space-x-1">
                                                 <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-                                                <span class="text-green-600 text-xs font-medium" x-text="keyData.valid"></span>
+                                                <span class="text-green-600 text-xs font-medium" x-text="getKeyStatusData(groupId, provider).valid"></span>
                                             </div>
 
                                             <!-- 无效密钥 -->
-                                            <div class="flex items-center space-x-1" x-show="keyData.invalid > 0">
+                                            <div class="flex items-center space-x-1" x-show="getKeyStatusData(groupId, provider).invalid > 0">
                                                 <div class="w-2 h-2 bg-red-500 rounded-full"></div>
-                                                <span class="text-red-600 text-xs font-medium" x-text="keyData.invalid"></span>
+                                                <span class="text-red-600 text-xs font-medium" x-text="getKeyStatusData(groupId, provider).invalid"></span>
                                             </div>
 
                                             <!-- 未检测 -->
-                                            <div class="flex items-center space-x-1" x-show="keyData.unknown > 0">
+                                            <div class="flex items-center space-x-1" x-show="getKeyStatusData(groupId, provider).unknown > 0">
                                                 <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
-                                                <span class="text-gray-500 text-xs font-medium" x-text="keyData.unknown"></span>
+                                                <span class="text-gray-500 text-xs font-medium" x-text="getKeyStatusData(groupId, provider).unknown"></span>
                                             </div>
                                         </div>
                                     </div>
@@ -503,9 +500,6 @@
                 <div>
                     <h3 class="text-lg font-medium mb-4">快速操作</h3>
                     <div class="space-y-2">
-                        <button @click="refreshData()" class="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
-                            刷新所有数据
-                        </button>
                         <button @click="showProxyKeyModal = true" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg transition duration-200">
                             代理密钥管理
                         </button>
@@ -513,7 +507,7 @@
                             导出健康报告
                         </button>
                         <button @click="viewSystemLogs()" class="w-full bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition duration-200">
-                            查看系统日志
+                            查看请求日志
                         </button>
                     </div>
                 </div>
@@ -643,6 +637,23 @@
                                         <option value="least_used">最少使用 (Least Used)</option>
                                     </select>
                                     <p class="text-xs text-gray-500 mt-1">多个密钥时的选择策略</p>
+                                </div>
+                            </div>
+
+                            <!-- 高级选项 -->
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="flex items-center space-x-2">
+                                        <input type="checkbox" x-model="groupFormData.use_native_response" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+                                        <span class="text-sm font-medium text-gray-700">使用原生接口响应</span>
+                                    </label>
+                                    <p class="text-xs text-gray-500 mt-1">勾选后将返回提供商的原生响应格式，而不是OpenAI兼容格式</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">RPM限制</label>
+                                    <input type="number" x-model="groupFormData.rpm_limit" min="0" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="如: 60">
+                                    <p class="text-xs text-gray-500 mt-1">每分钟请求数限制，0表示无限制</p>
                                 </div>
                             </div>
                         </div>
@@ -1342,7 +1353,9 @@
                     max_retries: 3,
                     rotation_strategy: 'round_robin',
                     api_keys: [''],
-                    models: []
+                    models: [],
+                    use_native_response: false,
+                    rpm_limit: 0
                 },
                 modelsText: '',
 
@@ -1410,8 +1423,8 @@
                     await this.loadProviderStatuses();
                     await this.loadProxyKeys();
 
-                    // 移除自动加载验证状态，改为手动触发
-                    // await this.loadPersistedValidationStatus();
+                    // 加载已保存的验证状态（初始化时不显示消息）
+                    await this.loadPersistedValidationStatus(false);
                     this.filterProviders();
 
                     // 启动定时刷新系统健康状态（每30秒）
@@ -1550,7 +1563,7 @@
                 },
 
                 // 加载所有分组的持久化验证状态
-                async loadPersistedValidationStatus() {
+                async loadPersistedValidationStatus(showMessage = true) {
                     this.loadingValidation = true;
                     try {
                         // 获取所有分组ID
@@ -1616,8 +1629,10 @@
                             this.keyStatus.last_updated = new Date().toLocaleString();
                         }
 
-                        // 显示完成消息
-                        this.showMessage(`已检查 ${processedGroups} 个分组的密钥验证状态`, 'success');
+                        // 显示完成消息（仅在手动调用时显示）
+                        if (showMessage) {
+                            this.showMessage(`已检查 ${processedGroups} 个分组的密钥验证状态`, 'success');
+                        }
                     } catch (error) {
                         console.error('Failed to load persisted validation status:', error);
                         this.showMessage('加载密钥验证状态失败: ' + error.message, 'error');
@@ -1717,6 +1732,7 @@
 
                         if (!groupData || !groupData.api_keys || groupData.api_keys.length === 0) {
                             alert('该分组没有配置API密钥');
+                            this.validatingGroups[groupId] = false;
                             return;
                         }
 
@@ -1725,6 +1741,7 @@
 
                         if (validKeys.length === 0) {
                             alert('该分组没有有效的API密钥');
+                            this.validatingGroups[groupId] = false;
                             return;
                         }
 
@@ -1895,7 +1912,9 @@
                             max_retries: fullGroupData.max_retries || 3,
                             rotation_strategy: fullGroupData.rotation_strategy || 'round_robin',
                             api_keys: apiKeys,
-                            models: fullGroupData.models || []
+                            models: fullGroupData.models || [],
+                            use_native_response: fullGroupData.use_native_response || false,
+                            rpm_limit: fullGroupData.rpm_limit || 0
                         };
 
                         this.modelsText = (fullGroupData.models || []).join('\n');
@@ -2072,7 +2091,9 @@
                         max_retries: 3,
                         rotation_strategy: 'round_robin',
                         api_keys: [''],
-                        models: []
+                        models: [],
+                        use_native_response: false,
+                        rpm_limit: 0
                     };
                     this.modelsText = '';
                     this.selectedKeys = [];

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -13,39 +14,42 @@ import (
 	"turnsapi/internal/keymanager"
 	"turnsapi/internal/providers"
 	"turnsapi/internal/router"
+
+	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // ProviderHealthStatus 提供商健康状态
 type ProviderHealthStatus struct {
-	GroupID       string                 `json:"group_id"`
-	GroupName     string                 `json:"group_name"`
-	ProviderType  string                 `json:"provider_type"`
-	BaseURL       string                 `json:"base_url"`
-	Enabled       bool                   `json:"enabled"`
-	Healthy       bool                   `json:"healthy"`
-	LastCheck     time.Time              `json:"last_check"`
-	LastError     string                 `json:"last_error,omitempty"`
-	ResponseTime  time.Duration          `json:"response_time"`
-	TotalKeys     int                    `json:"total_keys"`
-	ActiveKeys    int                    `json:"active_keys"`
-	KeyStatuses   map[string]interface{} `json:"key_statuses,omitempty"`
+	GroupID      string                 `json:"group_id"`
+	GroupName    string                 `json:"group_name"`
+	ProviderType string                 `json:"provider_type"`
+	BaseURL      string                 `json:"base_url"`
+	Enabled      bool                   `json:"enabled"`
+	Healthy      bool                   `json:"healthy"`
+	LastCheck    time.Time              `json:"last_check"`
+	LastError    string                 `json:"last_error,omitempty"`
+	ResponseTime time.Duration          `json:"response_time"`
+	TotalKeys    int                    `json:"total_keys"`
+	ActiveKeys   int                    `json:"active_keys"`
+	KeyStatuses  map[string]interface{} `json:"key_statuses,omitempty"`
 }
 
 // SystemHealthStatus 系统健康状态
 type SystemHealthStatus struct {
-	Status           string                          `json:"status"`
-	Timestamp        time.Time                       `json:"timestamp"`
-	Uptime           time.Duration                   `json:"uptime"`
-	StartTime        time.Time                       `json:"start_time"`
-	LastCheck        time.Time                       `json:"last_check"`
-	TotalGroups      int                             `json:"total_groups"`
-	HealthyGroups    int                             `json:"healthy_groups"`
-	TotalKeys        int                             `json:"total_keys"`
-	ActiveKeys       int                             `json:"active_keys"`
-	TotalRequests    int64                           `json:"total_requests"`
-	CPUUsage         float64                         `json:"cpu_usage"`
-	MemoryUsage      float64                         `json:"memory_usage"`
-	Version          string                          `json:"version"`
+	Status           string                           `json:"status"`
+	Timestamp        time.Time                        `json:"timestamp"`
+	Uptime           time.Duration                    `json:"uptime"`
+	StartTime        time.Time                        `json:"start_time"`
+	LastCheck        time.Time                        `json:"last_check"`
+	TotalGroups      int                              `json:"total_groups"`
+	HealthyGroups    int                              `json:"healthy_groups"`
+	TotalKeys        int                              `json:"total_keys"`
+	ActiveKeys       int                              `json:"active_keys"`
+	TotalRequests    int64                            `json:"total_requests"`
+	CPUUsage         float64                          `json:"cpu_usage"`
+	MemoryUsage      float64                          `json:"memory_usage"`
+	Version          string                           `json:"version"`
 	ProviderStatuses map[string]*ProviderHealthStatus `json:"provider_statuses"`
 }
 
@@ -63,14 +67,16 @@ type MultiProviderHealthChecker struct {
 	mutex           sync.RWMutex
 
 	// 系统资源监控
-	totalRequests   int64
-	cpuUsage        float64
-	memoryUsage     float64
+	totalRequests int64
+	cpuUsage      float64
+	memoryUsage   float64
+	lastCPUTime   time.Time
+	lastCPUStats  runtime.MemStats
 
 	// 健康检查配置
-	checkTimeout    time.Duration
-	ctx             context.Context
-	cancel          context.CancelFunc
+	checkTimeout time.Duration
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 // NewMultiProviderHealthChecker 创建多提供商健康检查器
@@ -81,7 +87,7 @@ func NewMultiProviderHealthChecker(
 	providerRouter *router.ProviderRouter,
 ) *MultiProviderHealthChecker {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	checker := &MultiProviderHealthChecker{
 		config:          config,
 		keyManager:      keyManager,
@@ -101,13 +107,13 @@ func NewMultiProviderHealthChecker(
 func (hc *MultiProviderHealthChecker) GetSystemHealth() *SystemHealthStatus {
 	hc.mutex.RLock()
 	defer hc.mutex.RUnlock()
-	
+
 	// 按需执行健康检查（不再自动触发）
 	if time.Since(hc.lastSystemCheck) > 5*time.Minute {
 		// 只有在5分钟以上没有检查时才触发新检查
 		go hc.performHealthCheck()
 	}
-	
+
 	totalGroups := len(hc.config.UserGroups)
 	healthyGroups := 0
 	totalKeys := 0
@@ -177,14 +183,14 @@ func (hc *MultiProviderHealthChecker) CheckProviderHealth(groupID string) *Provi
 	group, exists := hc.config.GetGroupByID(groupID)
 	if !exists {
 		return &ProviderHealthStatus{
-			GroupID:      groupID,
-			Enabled:      false,
-			Healthy:      false,
-			LastCheck:    time.Now(),
-			LastError:    "Group not found",
+			GroupID:   groupID,
+			Enabled:   false,
+			Healthy:   false,
+			LastCheck: time.Now(),
+			LastError: "Group not found",
 		}
 	}
-	
+
 	status := &ProviderHealthStatus{
 		GroupID:      groupID,
 		GroupName:    group.Name,
@@ -193,13 +199,13 @@ func (hc *MultiProviderHealthChecker) CheckProviderHealth(groupID string) *Provi
 		Enabled:      group.Enabled,
 		LastCheck:    time.Now(),
 	}
-	
+
 	if !group.Enabled {
 		status.Healthy = false
 		status.LastError = "Group is disabled"
 		return status
 	}
-	
+
 	// 获取密钥状态
 	groupStatus, exists := hc.keyManager.GetGroupStatus(groupID)
 	if exists {
@@ -215,13 +221,13 @@ func (hc *MultiProviderHealthChecker) CheckProviderHealth(groupID string) *Provi
 			}
 		}
 	}
-	
+
 	if status.ActiveKeys == 0 {
 		status.Healthy = false
 		status.LastError = "No active API keys"
 		return status
 	}
-	
+
 	// 执行实际的健康检查
 	startTime := time.Now()
 	err := hc.performProviderHealthCheck(groupID, group)
@@ -243,7 +249,7 @@ func (hc *MultiProviderHealthChecker) CheckProviderHealth(groupID string) *Provi
 		status.Healthy = true
 		status.LastError = ""
 	}
-	
+
 	return status
 }
 
@@ -254,9 +260,9 @@ func (hc *MultiProviderHealthChecker) isQuotaExceededError(err error) bool {
 	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "429") ||
-		   strings.Contains(errStr, "Quota exceeded") ||
-		   strings.Contains(errStr, "RATE_LIMIT_EXCEEDED") ||
-		   strings.Contains(errStr, "quota exceeded")
+		strings.Contains(errStr, "Quota exceeded") ||
+		strings.Contains(errStr, "RATE_LIMIT_EXCEEDED") ||
+		strings.Contains(errStr, "quota exceeded")
 }
 
 // performProviderHealthCheck 执行提供商健康检查
@@ -266,7 +272,7 @@ func (hc *MultiProviderHealthChecker) performProviderHealthCheck(groupID string,
 	if err != nil {
 		return fmt.Errorf("failed to get API key: %w", err)
 	}
-	
+
 	// 创建提供商配置
 	providerConfig := &providers.ProviderConfig{
 		BaseURL:      group.BaseURL,
@@ -276,23 +282,23 @@ func (hc *MultiProviderHealthChecker) performProviderHealthCheck(groupID string,
 		Headers:      group.Headers,
 		ProviderType: group.ProviderType,
 	}
-	
+
 	// 获取提供商实例
 	provider, err := hc.providerManager.GetProvider(groupID, providerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to get provider: %w", err)
 	}
-	
+
 	// 执行健康检查
 	ctx, cancel := context.WithTimeout(hc.ctx, hc.checkTimeout)
 	defer cancel()
-	
+
 	err = provider.HealthCheck(ctx)
 	if err != nil {
 		hc.keyManager.ReportError(groupID, apiKey, err.Error())
 		return err
 	}
-	
+
 	hc.keyManager.ReportSuccess(groupID, apiKey)
 	return nil
 }
@@ -324,7 +330,7 @@ func (hc *MultiProviderHealthChecker) performHealthCheck() {
 	// 并发检查所有启用的分组
 	var wg sync.WaitGroup
 	statusChan := make(chan *ProviderHealthStatus, len(hc.config.UserGroups))
-	
+
 	for groupID := range hc.config.UserGroups {
 		wg.Add(1)
 		go func(gid string) {
@@ -333,18 +339,18 @@ func (hc *MultiProviderHealthChecker) performHealthCheck() {
 			statusChan <- status
 		}(groupID)
 	}
-	
+
 	// 等待所有检查完成
 	go func() {
 		wg.Wait()
 		close(statusChan)
 	}()
-	
+
 	// 收集结果
 	for status := range statusChan {
 		hc.healthStatuses[status.GroupID] = status
 	}
-	
+
 	// 统计结果
 	healthy := 0
 	total := 0
@@ -356,7 +362,7 @@ func (hc *MultiProviderHealthChecker) performHealthCheck() {
 			}
 		}
 	}
-	
+
 	log.Printf("Health check completed: %d/%d provider groups healthy", healthy, total)
 }
 
@@ -376,40 +382,118 @@ func (hc *MultiProviderHealthChecker) updateSystemMetrics() {
 	hc.memoryUsage = hc.getMemoryUsage()
 }
 
-// getCPUUsage 获取CPU使用率（简化实现）
+// getCPUUsage 获取本程序的CPU使用率（相对于系统总CPU）
 func (hc *MultiProviderHealthChecker) getCPUUsage() float64 {
-	// 这里是一个简化的实现
-	// 在实际项目中，可以使用 github.com/shirou/gopsutil 等库来获取真实的CPU使用率
-
-	// 基于请求数量和运行时间的简单估算
-	uptime := time.Since(hc.startTime).Seconds()
-	if uptime > 0 {
-		requestRate := float64(hc.totalRequests) / uptime
-		// 简单的CPU使用率估算：每秒处理的请求数 * 0.1%
-		usage := requestRate * 0.1
-		if usage > 100 {
-			usage = 100
-		}
-		return usage
+	// 获取当前进程
+	pid := os.Getpid()
+	proc, err := process.NewProcess(int32(pid))
+	if err != nil {
+		// 如果无法获取进程信息，返回基于runtime的估算
+		return hc.getCPUUsageFallback()
 	}
-	return 0
+
+	// 获取CPU使用率
+	cpuPercent, err := proc.CPUPercent()
+	if err != nil {
+		// 如果无法获取CPU使用率，返回基于runtime的估算
+		return hc.getCPUUsageFallback()
+	}
+
+	return cpuPercent
 }
 
-// getMemoryUsage 获取内存使用率（简化实现）
-func (hc *MultiProviderHealthChecker) getMemoryUsage() float64 {
-	// 这里是一个简化的实现
-	// 在实际项目中，可以使用 runtime.ReadMemStats 或 gopsutil 来获取真实的内存使用率
+// getCPUUsageFallback CPU使用率获取的备用方法
+func (hc *MultiProviderHealthChecker) getCPUUsageFallback() float64 {
+	// 获取当前时间
+	now := time.Now()
 
+	// 如果是第一次调用，初始化
+	if hc.lastCPUTime.IsZero() {
+		hc.lastCPUTime = now
+		return 0.1 // 返回一个小的基础值
+	}
+
+	// 计算时间差
+	timeDiff := now.Sub(hc.lastCPUTime).Seconds()
+	if timeDiff < 1.0 {
+		// 时间间隔太短，返回上次的值
+		return hc.cpuUsage
+	}
+
+	// 基于程序活动估算CPU使用率
+	uptime := time.Since(hc.startTime).Seconds()
+
+	// 1. 基于请求处理活动
+	requestRate := 0.0
+	if uptime > 0 {
+		requestRate = float64(hc.totalRequests) / uptime
+	}
+
+	// 2. 基于Goroutine数量（反映并发活动）
+	goroutineCount := float64(runtime.NumGoroutine())
+
+	// 3. 基于GC活动
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	gcRate := 0.0
+	if uptime > 0 {
+		gcRate = float64(m.NumGC) / uptime
+	}
+
+	// 综合计算本程序的CPU使用率估算
+	usage := 0.1                    // 基础值
+	usage += requestRate * 0.02     // 请求处理贡献
+	usage += goroutineCount * 0.005 // Goroutine贡献
+	usage += gcRate * 0.1           // GC活动贡献
+
+	// 限制在合理范围内
+	if usage > 5.0 {
+		usage = 5.0
+	}
+	if usage < 0.1 {
+		usage = 0.1
+	}
+
+	// 更新记录
+	hc.lastCPUTime = now
+
+	return usage
+}
+
+// getMemoryUsage 获取本程序的内存使用率（相对于系统总内存）
+func (hc *MultiProviderHealthChecker) getMemoryUsage() float64 {
+	// 获取系统内存信息
+	vmStat, err := mem.VirtualMemory()
+	if err != nil {
+		// 如果无法获取系统内存信息，使用备用方法
+		return hc.getMemoryUsageFallback()
+	}
+
+	// 获取当前程序的内存使用量
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	// 计算内存使用率（这里假设系统总内存为8GB）
-	totalMemory := uint64(8 * 1024 * 1024 * 1024) // 8GB
-	usedMemory := m.Alloc
+	// 计算内存使用率：程序使用的内存 / 系统总内存 * 100
+	usage := float64(m.Alloc) / float64(vmStat.Total) * 100
 
-	usage := float64(usedMemory) / float64(totalMemory) * 100
-	if usage > 100 {
-		usage = 100
+	return usage
+}
+
+// getMemoryUsageFallback 内存使用率获取的备用方法
+func (hc *MultiProviderHealthChecker) getMemoryUsageFallback() float64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	// 获取当前分配的内存（字节）
+	allocMB := float64(m.Alloc) / 1024 / 1024 // 转换为MB
+
+	// 假设系统有8GB内存作为基准
+	systemMemoryMB := 8 * 1024.0 // 8GB
+	usage := (allocMB / systemMemoryMB) * 100
+
+	// 确保至少显示一些使用率
+	if usage < 0.01 {
+		usage = 0.01
 	}
 
 	return usage

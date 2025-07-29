@@ -10,18 +10,20 @@ import (
 
 // UserGroup 用户自定义分组配置
 type UserGroup struct {
-	Name             string                 `yaml:"name"`
-	ProviderType     string                 `yaml:"provider_type"`
-	BaseURL          string                 `yaml:"base_url"`
-	Enabled          bool                   `yaml:"enabled"`
-	Timeout          time.Duration          `yaml:"timeout"`
-	MaxRetries       int                    `yaml:"max_retries"`
-	RotationStrategy string                 `yaml:"rotation_strategy"`
-	Models           []string               `yaml:"models"`
-	APIKeys          []string               `yaml:"api_keys"`
-	Headers          map[string]string      `yaml:"headers,omitempty"`
-	RequestParams    map[string]interface{} `yaml:"request_params,omitempty"` // JSON请求参数覆盖
-	ModelMappings    map[string]string      `yaml:"model_mappings,omitempty"` // 模型名称映射：别名 -> 原始模型名
+	Name              string                 `yaml:"name"`
+	ProviderType      string                 `yaml:"provider_type"`
+	BaseURL           string                 `yaml:"base_url"`
+	Enabled           bool                   `yaml:"enabled"`
+	Timeout           time.Duration          `yaml:"timeout"`
+	MaxRetries        int                    `yaml:"max_retries"`
+	RotationStrategy  string                 `yaml:"rotation_strategy"`
+	Models            []string               `yaml:"models"`
+	APIKeys           []string               `yaml:"api_keys"`
+	Headers           map[string]string      `yaml:"headers,omitempty"`
+	RequestParams     map[string]interface{} `yaml:"request_params,omitempty"`      // JSON请求参数覆盖
+	ModelMappings     map[string]string      `yaml:"model_mappings,omitempty"`      // 模型名称映射：别名 -> 原始模型名
+	UseNativeResponse bool                   `yaml:"use_native_response,omitempty"` // 是否使用原生接口响应格式
+	RPMLimit          int                    `yaml:"rpm_limit,omitempty"`           // 每分钟请求数限制
 }
 
 // GlobalSettings 全局设置
@@ -70,8 +72,8 @@ type Config struct {
 	} `yaml:"openrouter,omitempty"`
 
 	APIKeys struct {
-		Keys                []string      `yaml:"keys"`
-		RotationStrategy    string        `yaml:"rotation_strategy"`
+		Keys             []string `yaml:"keys"`
+		RotationStrategy string   `yaml:"rotation_strategy"`
 	} `yaml:"api_keys,omitempty"`
 
 	Logging struct {
@@ -83,8 +85,8 @@ type Config struct {
 	} `yaml:"logging"`
 
 	Database struct {
-		Path           string `yaml:"path"`
-		RetentionDays  int    `yaml:"retention_days"`
+		Path          string `yaml:"path"`
+		RetentionDays int    `yaml:"retention_days"`
 	} `yaml:"database"`
 }
 
@@ -111,7 +113,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		config.Server.Host = "0.0.0.0"
 	}
 	if config.Server.Mode == "" {
-		config.Server.Mode = "release"  // 默认使用release模式
+		config.Server.Mode = "release" // 默认使用release模式
 	}
 	if config.Logging.Level == "" {
 		config.Logging.Level = "info"

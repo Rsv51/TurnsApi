@@ -15,10 +15,10 @@ import (
 
 // GeminiQuotaManager 配额管理器
 type GeminiQuotaManager struct {
-	mu                sync.RWMutex
-	lastQuotaError    time.Time
-	quotaErrorCount   int
-	backoffDuration   time.Duration
+	mu              sync.RWMutex
+	lastQuotaError  time.Time
+	quotaErrorCount int
+	backoffDuration time.Duration
 }
 
 // NewGeminiQuotaManager 创建配额管理器
@@ -138,7 +138,6 @@ func (p *GeminiProvider) ChatCompletion(ctx context.Context, req *ChatCompletion
 		maxTokens := int32(*req.MaxTokens)
 		genConfig.MaxOutputTokens = maxTokens
 	}
-
 
 	// 设置TopP
 	if req.TopP != nil {
@@ -290,30 +289,49 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 
 // GetModels 获取可用模型列表
 func (p *GeminiProvider) GetModels(ctx context.Context) (interface{}, error) {
-	// 返回Gemini支持的模型列表
+	// 如果客户端未初始化，返回默认模型列表
+	if p.client == nil {
+		return p.getDefaultModels(), nil
+	}
+
+	// 尝试从Google API获取模型列表
+	models, err := p.fetchModelsFromAPI(ctx)
+	if err != nil {
+		// 如果API调用失败，返回默认模型列表
+		return p.getDefaultModels(), nil
+	}
+
+	return map[string]interface{}{
+		"object": "list",
+		"data":   models,
+	}, nil
+}
+
+// getDefaultModels 获取默认模型列表
+func (p *GeminiProvider) getDefaultModels() map[string]interface{} {
 	models := []map[string]interface{}{
 		{
-			"id":      "gemini-2.5-flash",
-			"object":  "model",
-			"created": time.Now().Unix(),
+			"id":       "gemini-2.5-flash",
+			"object":   "model",
+			"created":  time.Now().Unix(),
 			"owned_by": "google",
 		},
 		{
-			"id":      "gemini-2.5-pro",
-			"object":  "model", 
-			"created": time.Now().Unix(),
+			"id":       "gemini-2.5-pro",
+			"object":   "model",
+			"created":  time.Now().Unix(),
 			"owned_by": "google",
 		},
 		{
-			"id":      "gemini-1.5-flash",
-			"object":  "model",
-			"created": time.Now().Unix(),
+			"id":       "gemini-1.5-flash",
+			"object":   "model",
+			"created":  time.Now().Unix(),
 			"owned_by": "google",
 		},
 		{
-			"id":      "gemini-1.5-pro",
-			"object":  "model",
-			"created": time.Now().Unix(),
+			"id":       "gemini-1.5-pro",
+			"object":   "model",
+			"created":  time.Now().Unix(),
 			"owned_by": "google",
 		},
 	}
@@ -321,7 +339,81 @@ func (p *GeminiProvider) GetModels(ctx context.Context) (interface{}, error) {
 	return map[string]interface{}{
 		"object": "list",
 		"data":   models,
-	}, nil
+	}
+}
+
+// fetchModelsFromAPI 从Google API获取模型列表
+func (p *GeminiProvider) fetchModelsFromAPI(ctx context.Context) ([]map[string]interface{}, error) {
+	// 使用HTTP客户端调用Google API
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", p.Config.APIKey)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d", resp.StatusCode)
+	}
+
+	var apiResponse struct {
+		Models []struct {
+			Name                       string   `json:"name"`
+			BaseModelID                string   `json:"baseModelId"`
+			Version                    string   `json:"version"`
+			DisplayName                string   `json:"displayName"`
+			Description                string   `json:"description"`
+			InputTokenLimit            int      `json:"inputTokenLimit"`
+			OutputTokenLimit           int      `json:"outputTokenLimit"`
+			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+			Temperature                float64  `json:"temperature"`
+			MaxTemperature             float64  `json:"maxTemperature"`
+		} `json:"models"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// 转换为OpenAI格式
+	var models []map[string]interface{}
+	for _, model := range apiResponse.Models {
+		// 只包含支持generateContent的模型
+		supportsGeneration := false
+		for _, method := range model.SupportedGenerationMethods {
+			if method == "generateContent" {
+				supportsGeneration = true
+				break
+			}
+		}
+
+		if supportsGeneration {
+			// 提取模型ID（去掉"models/"前缀）
+			modelID := model.Name
+			if strings.HasPrefix(modelID, "models/") {
+				modelID = strings.TrimPrefix(modelID, "models/")
+			}
+
+			models = append(models, map[string]interface{}{
+				"id":       modelID,
+				"object":   "model",
+				"created":  time.Now().Unix(),
+				"owned_by": "google",
+			})
+		}
+	}
+
+	return models, nil
 }
 
 // HealthCheck 健康检查
@@ -348,8 +440,8 @@ func (p *GeminiProvider) HealthCheck(ctx context.Context) error {
 	}
 
 	genConfig := &genai.GenerateContentConfig{
-		Temperature: func() *float32 { t := float32(0.1); return &t }(), // 健康检查使用低温度确保稳定性
-		MaxOutputTokens: int32(100), // 限制输出以节省配额
+		Temperature:     func() *float32 { t := float32(0.1); return &t }(), // 健康检查使用低温度确保稳定性
+		MaxOutputTokens: int32(100),                                         // 限制输出以节省配额
 	}
 
 	_, err := p.client.Models.GenerateContent(healthCtx, "gemini-2.5-flash", contents, genConfig)
@@ -637,8 +729,8 @@ func (p *GeminiProvider) isQuotaExceededError(err error) bool {
 	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "429") ||
-		   strings.Contains(errStr, "Quota exceeded") ||
-		   strings.Contains(errStr, "RATE_LIMIT_EXCEEDED")
+		strings.Contains(errStr, "Quota exceeded") ||
+		strings.Contains(errStr, "RATE_LIMIT_EXCEEDED")
 }
 
 // isAuthError 检查是否是认证错误
@@ -648,9 +740,9 @@ func (p *GeminiProvider) isAuthError(err error) bool {
 	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "401") ||
-		   strings.Contains(errStr, "403") ||
-		   strings.Contains(errStr, "API key") ||
-		   strings.Contains(errStr, "authentication")
+		strings.Contains(errStr, "403") ||
+		strings.Contains(errStr, "API key") ||
+		strings.Contains(errStr, "authentication")
 }
 
 // handleGeminiError 处理Gemini特定的错误

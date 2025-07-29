@@ -26,17 +26,17 @@ import (
 
 // MultiProviderServer 多提供商HTTP服务器
 type MultiProviderServer struct {
-	configManager       *internal.ConfigManager
-	config              *internal.Config
-	keyManager          *keymanager.MultiGroupKeyManager
-	proxy               *proxy.MultiProviderProxy
-	authManager         *auth.AuthManager
-	proxyKeyManager     *proxykey.Manager
-	requestLogger       *logger.RequestLogger
-	healthChecker       *health.MultiProviderHealthChecker
-	router              *gin.Engine
-	httpServer          *http.Server
-	startTime           time.Time
+	configManager   *internal.ConfigManager
+	config          *internal.Config
+	keyManager      *keymanager.MultiGroupKeyManager
+	proxy           *proxy.MultiProviderProxy
+	authManager     *auth.AuthManager
+	proxyKeyManager *proxykey.Manager
+	requestLogger   *logger.RequestLogger
+	healthChecker   *health.MultiProviderHealthChecker
+	router          *gin.Engine
+	httpServer      *http.Server
+	startTime       time.Time
 }
 
 // NewMultiProviderServer 创建新的多提供商服务器
@@ -151,16 +151,16 @@ func (s *MultiProviderServer) setupRoutes() {
 	{
 		// 系统状态
 		admin.GET("/status", s.handleStatus)
-		
+
 		// 健康检查
 		admin.GET("/health/system", s.handleSystemHealth)
 		admin.GET("/health/providers", s.handleProvidersHealth)
 		admin.GET("/health/providers/:groupId", s.handleProviderHealth)
-		
+
 		// 密钥管理
 		admin.GET("/groups", s.handleGroupsStatus)
 		admin.GET("/groups/:groupId/keys", s.handleGroupKeysStatus)
-		
+
 		// 模型管理
 		admin.GET("/models", s.handleAllModels)
 		admin.GET("/models/:groupId", s.handleGroupModels)
@@ -171,7 +171,7 @@ func (s *MultiProviderServer) setupRoutes() {
 		admin.POST("/keys/validate", s.handleValidateKeysWithoutGroup)
 		admin.GET("/keys/status", s.handleKeysStatus)
 		admin.GET("/keys/validation/:groupId", s.handleGetKeyValidationStatus)
-		
+
 		// 日志管理
 		admin.GET("/logs", s.handleLogs)
 		admin.GET("/logs/:id", s.handleLogDetail)
@@ -180,7 +180,7 @@ func (s *MultiProviderServer) setupRoutes() {
 		admin.GET("/logs/export", s.handleExportLogs)
 		admin.GET("/logs/stats/api-keys", s.handleAPIKeyStats)
 		admin.GET("/logs/stats/models", s.handleModelStats)
-		
+
 		// 代理密钥管理
 		admin.GET("/proxy-keys", s.handleProxyKeys)
 		admin.POST("/proxy-keys", s.handleGenerateProxyKey)
@@ -272,8 +272,6 @@ func (s *MultiProviderServer) handleModels(c *gin.Context) {
 	// 获取并返回标准OpenAI格式的模型列表
 	s.handleOpenAIModels(c, proxyKey, groupID)
 }
-
-
 
 // handleOpenAIModels 处理OpenAI格式的模型列表请求
 func (s *MultiProviderServer) handleOpenAIModels(c *gin.Context, proxyKey *logger.ProxyKey, groupID string) {
@@ -430,29 +428,22 @@ func (s *MultiProviderServer) getOwnerByModelID(modelID string) string {
 
 // getOpenAIModels 获取OpenAI模型列表
 func (s *MultiProviderServer) getOpenAIModels() []map[string]interface{} {
-	return []map[string]interface{}{
-		
-	}
+	return []map[string]interface{}{}
 }
 
 // getOpenRouterModels 获取OpenRouter模型列表
 func (s *MultiProviderServer) getOpenRouterModels() []map[string]interface{} {
-	return []map[string]interface{}{
-		
-	}
+	return []map[string]interface{}{}
 }
 
 // getAnthropicModels 获取Anthropic模型列表
 func (s *MultiProviderServer) getAnthropicModels() []map[string]interface{} {
-	return []map[string]interface{}{
-		
-	}
+	return []map[string]interface{}{}
 }
 
 // getGeminiModels 获取Gemini模型列表
 func (s *MultiProviderServer) getGeminiModels() []map[string]interface{} {
-	return []map[string]interface{}{
-	}
+	return []map[string]interface{}{}
 }
 
 // hasGroupAccess 检查代理密钥是否有访问指定分组的权限
@@ -543,10 +534,6 @@ func (s *MultiProviderServer) applyModelMappings(models []map[string]interface{}
 	return enhancedModels
 }
 
-
-
-
-
 // handleSystemHealth 处理系统健康检查
 func (s *MultiProviderServer) handleSystemHealth(c *gin.Context) {
 	health := s.healthChecker.GetSystemHealth()
@@ -569,7 +556,7 @@ func (s *MultiProviderServer) handleProviderHealth(c *gin.Context) {
 // handleStatus 处理状态查询
 func (s *MultiProviderServer) handleStatus(c *gin.Context) {
 	systemHealth := s.healthChecker.GetSystemHealth()
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":         systemHealth.Status,
 		"timestamp":      time.Now(),
@@ -580,8 +567,6 @@ func (s *MultiProviderServer) handleStatus(c *gin.Context) {
 		"active_keys":    systemHealth.ActiveKeys,
 	})
 }
-
-
 
 // handleGroupsStatus 处理分组状态查询
 func (s *MultiProviderServer) handleGroupsStatus(c *gin.Context) {
@@ -629,7 +614,7 @@ func (s *MultiProviderServer) handleGroupsStatus(c *gin.Context) {
 // handleGroupKeysStatus 处理特定分组的密钥状态查询
 func (s *MultiProviderServer) handleGroupKeysStatus(c *gin.Context) {
 	groupID := c.Param("groupId")
-	
+
 	groupStatus, exists := s.keyManager.GetGroupStatus(groupID)
 	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -637,7 +622,7 @@ func (s *MultiProviderServer) handleGroupKeysStatus(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, groupStatus)
 }
 
@@ -777,11 +762,11 @@ func (s *MultiProviderServer) handleAvailableModels(c *gin.Context) {
 // handleAvailableModelsByType 根据提供商类型和配置获取可用模型（用于新建分组时的模型选择）
 func (s *MultiProviderServer) handleAvailableModelsByType(c *gin.Context) {
 	var req struct {
-		ProviderType string   `json:"provider_type" binding:"required"`
-		BaseURL      string   `json:"base_url" binding:"required"`
-		APIKeys      []string `json:"api_keys" binding:"required"`
-		MaxRetries   int      `json:"max_retries"`
-		Timeout      int      `json:"timeout_seconds"`
+		ProviderType string            `json:"provider_type" binding:"required"`
+		BaseURL      string            `json:"base_url" binding:"required"`
+		APIKeys      []string          `json:"api_keys" binding:"required"`
+		MaxRetries   int               `json:"max_retries"`
+		Timeout      int               `json:"timeout_seconds"`
 		Headers      map[string]string `json:"headers"`
 	}
 
@@ -997,12 +982,12 @@ func (s *MultiProviderServer) handleValidateKeys(c *gin.Context) {
 		float64(validCount)/float64(len(req.APIKeys))*100)
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":       true,
-		"test_model":    testModel,
-		"total_keys":    len(req.APIKeys),
-		"valid_keys":    validCount,
-		"invalid_keys":  invalidCount,
-		"results":       results,
+		"success":      true,
+		"test_model":   testModel,
+		"total_keys":   len(req.APIKeys),
+		"valid_keys":   validCount,
+		"invalid_keys": invalidCount,
+		"results":      results,
 	})
 }
 
@@ -1320,12 +1305,12 @@ func (s *MultiProviderServer) handleMultiProviderDashboard(c *gin.Context) {
 // handleHealth 处理健康检查
 func (s *MultiProviderServer) handleHealth(c *gin.Context) {
 	systemHealth := s.healthChecker.GetSystemHealth()
-	
+
 	status := "healthy"
 	if systemHealth.Status != "healthy" {
 		status = systemHealth.Status
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":    status,
 		"timestamp": time.Now(),
@@ -1349,12 +1334,12 @@ func (s *MultiProviderServer) Stop(ctx context.Context) error {
 	if s.healthChecker != nil {
 		s.healthChecker.Close()
 	}
-	
+
 	// 关闭密钥管理器
 	if s.keyManager != nil {
 		s.keyManager.Close()
 	}
-	
+
 	// 关闭请求日志记录器
 	if s.requestLogger != nil {
 		if err := s.requestLogger.Close(); err != nil {
@@ -1711,8 +1696,8 @@ func (s *MultiProviderServer) handleProxyKeys(c *gin.Context) {
 		searchLower := strings.ToLower(search)
 		for _, key := range allKeys {
 			if strings.Contains(strings.ToLower(key.Name), searchLower) ||
-			   strings.Contains(strings.ToLower(key.Description), searchLower) ||
-			   strings.Contains(strings.ToLower(key.Key), searchLower) {
+				strings.Contains(strings.ToLower(key.Description), searchLower) ||
+				strings.Contains(strings.ToLower(key.Key), searchLower) {
 				filteredKeys = append(filteredKeys, key)
 			}
 		}
@@ -1744,8 +1729,8 @@ func (s *MultiProviderServer) handleProxyKeys(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":     true,
-		"keys":        pageKeys,
+		"success": true,
+		"keys":    pageKeys,
 		"pagination": gin.H{
 			"page":        page,
 			"page_size":   pageSize,
@@ -1825,19 +1810,21 @@ func (s *MultiProviderServer) handleGroupsManage(c *gin.Context) {
 	allGroups := s.configManager.GetAllGroups()
 	for groupID, group := range allGroups {
 		groupInfo := map[string]interface{}{
-			"group_id":          groupID,
-			"group_name":        group.Name,
-			"provider_type":     group.ProviderType,
-			"base_url":          group.BaseURL,
-			"enabled":           group.Enabled,
-			"timeout":           group.Timeout.Seconds(),
-			"max_retries":       group.MaxRetries,
-			"rotation_strategy": group.RotationStrategy,
-			"api_keys":          group.APIKeys,
-			"models":            group.Models,
-			"headers":           group.Headers,
-			"request_params":    group.RequestParams,
-			"model_mappings":    group.ModelMappings,
+			"group_id":            groupID,
+			"group_name":          group.Name,
+			"provider_type":       group.ProviderType,
+			"base_url":            group.BaseURL,
+			"enabled":             group.Enabled,
+			"timeout":             group.Timeout.Seconds(),
+			"max_retries":         group.MaxRetries,
+			"rotation_strategy":   group.RotationStrategy,
+			"api_keys":            group.APIKeys,
+			"models":              group.Models,
+			"headers":             group.Headers,
+			"request_params":      group.RequestParams,
+			"model_mappings":      group.ModelMappings,
+			"use_native_response": group.UseNativeResponse,
+			"rpm_limit":           group.RPMLimit,
 		}
 
 		// 获取健康状态，如果没有健康检查记录则默认为健康
@@ -1866,19 +1853,21 @@ func (s *MultiProviderServer) handleGroupsManage(c *gin.Context) {
 // handleCreateGroup 处理创建分组
 func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 	var req struct {
-		GroupID          string                 `json:"group_id" binding:"required"`
-		Name             string                 `json:"name" binding:"required"`
-		ProviderType     string                 `json:"provider_type" binding:"required"`
-		BaseURL          string                 `json:"base_url" binding:"required"`
-		Enabled          bool                   `json:"enabled"`
-		Timeout          float64                `json:"timeout"`
-		MaxRetries       int                    `json:"max_retries"`
-		RotationStrategy string                 `json:"rotation_strategy"`
-		APIKeys          []string               `json:"api_keys"`
-		Models           []string               `json:"models"`
-		Headers          map[string]string      `json:"headers"`
-		RequestParams    map[string]interface{} `json:"request_params"`
-		ModelMappings    map[string]string      `json:"model_mappings"`
+		GroupID           string                 `json:"group_id" binding:"required"`
+		Name              string                 `json:"name" binding:"required"`
+		ProviderType      string                 `json:"provider_type" binding:"required"`
+		BaseURL           string                 `json:"base_url" binding:"required"`
+		Enabled           bool                   `json:"enabled"`
+		Timeout           float64                `json:"timeout"`
+		MaxRetries        int                    `json:"max_retries"`
+		RotationStrategy  string                 `json:"rotation_strategy"`
+		APIKeys           []string               `json:"api_keys"`
+		Models            []string               `json:"models"`
+		Headers           map[string]string      `json:"headers"`
+		RequestParams     map[string]interface{} `json:"request_params"`
+		ModelMappings     map[string]string      `json:"model_mappings"`
+		UseNativeResponse bool                   `json:"use_native_response"`
+		RPMLimit          int                    `json:"rpm_limit"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1941,21 +1930,21 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 
 	// 创建新的用户分组
 	newGroup := &internal.UserGroup{
-		Name:             req.Name,
-		ProviderType:     req.ProviderType,
-		BaseURL:          req.BaseURL,
-		Enabled:          req.Enabled,
-		Timeout:          time.Duration(req.Timeout) * time.Second,
-		MaxRetries:       req.MaxRetries,
-		RotationStrategy: req.RotationStrategy,
-		APIKeys:          req.APIKeys,
-		Models:           req.Models,
-		Headers:          req.Headers,
-		RequestParams:    req.RequestParams,
-		ModelMappings:    req.ModelMappings,
+		Name:              req.Name,
+		ProviderType:      req.ProviderType,
+		BaseURL:           req.BaseURL,
+		Enabled:           req.Enabled,
+		Timeout:           time.Duration(req.Timeout) * time.Second,
+		MaxRetries:        req.MaxRetries,
+		RotationStrategy:  req.RotationStrategy,
+		APIKeys:           req.APIKeys,
+		Models:            req.Models,
+		Headers:           req.Headers,
+		RequestParams:     req.RequestParams,
+		ModelMappings:     req.ModelMappings,
+		UseNativeResponse: req.UseNativeResponse,
+		RPMLimit:          req.RPMLimit,
 	}
-
-
 
 	// 保存到配置管理器（会同时更新数据库和内存）
 	if err := s.configManager.SaveGroup(req.GroupID, newGroup); err != nil {
@@ -1975,9 +1964,12 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 		return
 	}
 
+	// 更新RPM限制
+	s.proxy.UpdateRPMLimit(req.GroupID, req.RPMLimit)
+
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Group created successfully",
+		"success":  true,
+		"message":  "Group created successfully",
 		"group_id": req.GroupID,
 	})
 }
@@ -1997,18 +1989,20 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 	}
 
 	var req struct {
-		Name             string                 `json:"name"`
-		ProviderType     string                 `json:"provider_type"`
-		BaseURL          string                 `json:"base_url"`
-		Enabled          *bool                  `json:"enabled"`
-		Timeout          *float64               `json:"timeout"`
-		MaxRetries       *int                   `json:"max_retries"`
-		RotationStrategy string                 `json:"rotation_strategy"`
-		APIKeys          []string               `json:"api_keys"`
-		Models           []string               `json:"models"`
-		Headers          map[string]string      `json:"headers"`
-		RequestParams    map[string]interface{} `json:"request_params"`
-		ModelMappings    map[string]string      `json:"model_mappings"`
+		Name              string                 `json:"name"`
+		ProviderType      string                 `json:"provider_type"`
+		BaseURL           string                 `json:"base_url"`
+		Enabled           *bool                  `json:"enabled"`
+		Timeout           *float64               `json:"timeout"`
+		MaxRetries        *int                   `json:"max_retries"`
+		RotationStrategy  string                 `json:"rotation_strategy"`
+		APIKeys           []string               `json:"api_keys"`
+		Models            []string               `json:"models"`
+		Headers           map[string]string      `json:"headers"`
+		RequestParams     map[string]interface{} `json:"request_params"`
+		ModelMappings     map[string]string      `json:"model_mappings"`
+		UseNativeResponse *bool                  `json:"use_native_response"`
+		RPMLimit          *int                   `json:"rpm_limit"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2018,8 +2012,6 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 		})
 		return
 	}
-
-
 
 	// 更新字段（只更新提供的字段）
 	if req.Name != "" {
@@ -2075,8 +2067,12 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 	if req.ModelMappings != nil {
 		existingGroup.ModelMappings = req.ModelMappings
 	}
-
-
+	if req.UseNativeResponse != nil {
+		existingGroup.UseNativeResponse = *req.UseNativeResponse
+	}
+	if req.RPMLimit != nil {
+		existingGroup.RPMLimit = *req.RPMLimit
+	}
 
 	// 保存到配置管理器
 	if err := s.configManager.UpdateGroup(groupID, existingGroup); err != nil {
@@ -2095,6 +2091,9 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 		})
 		return
 	}
+
+	// 更新RPM限制
+	s.proxy.UpdateRPMLimit(groupID, existingGroup.RPMLimit)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -2327,12 +2326,12 @@ func (s *MultiProviderServer) handleValidateKeysWithoutGroup(c *gin.Context) {
 		float64(validCount)/float64(len(req.APIKeys))*100)
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":       true,
-		"test_model":    testModel,
-		"total_keys":    len(req.APIKeys),
-		"valid_keys":    validCount,
-		"invalid_keys":  invalidCount,
-		"results":       results,
+		"success":      true,
+		"test_model":   testModel,
+		"total_keys":   len(req.APIKeys),
+		"valid_keys":   validCount,
+		"invalid_keys": invalidCount,
+		"results":      results,
 	})
 }
 
