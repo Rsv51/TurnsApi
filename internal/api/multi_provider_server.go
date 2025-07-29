@@ -428,22 +428,171 @@ func (s *MultiProviderServer) getOwnerByModelID(modelID string) string {
 
 // getOpenAIModels 获取OpenAI模型列表
 func (s *MultiProviderServer) getOpenAIModels() []map[string]interface{} {
-	return []map[string]interface{}{}
+	return []map[string]interface{}{
+		{
+			"id":       "gpt-3.5-turbo",
+			"object":   "model",
+			"created":  1640995200, // 2022-01-01
+			"owned_by": "openai",
+		},
+		{
+			"id":       "gpt-3.5-turbo-16k",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+		{
+			"id":       "gpt-4",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+		{
+			"id":       "gpt-4-turbo",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+		{
+			"id":       "gpt-4o",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+		{
+			"id":       "gpt-4o-mini",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+	}
 }
 
 // getOpenRouterModels 获取OpenRouter模型列表
 func (s *MultiProviderServer) getOpenRouterModels() []map[string]interface{} {
-	return []map[string]interface{}{}
+	// OpenRouter支持大量模型，这里返回一些常用的
+	return []map[string]interface{}{
+		{
+			"id":       "openai/gpt-3.5-turbo",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+		{
+			"id":       "openai/gpt-4",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+		{
+			"id":       "openai/gpt-4-turbo",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "openai",
+		},
+		{
+			"id":       "anthropic/claude-3-sonnet",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+		{
+			"id":       "anthropic/claude-3-opus",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+		{
+			"id":       "google/gemini-pro",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "google",
+		},
+	}
 }
 
 // getAnthropicModels 获取Anthropic模型列表
 func (s *MultiProviderServer) getAnthropicModels() []map[string]interface{} {
-	return []map[string]interface{}{}
+	return []map[string]interface{}{
+		{
+			"id":       "claude-3-sonnet-20240229",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+		{
+			"id":       "claude-3-opus-20240229",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+		{
+			"id":       "claude-3-haiku-20240307",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+		{
+			"id":       "claude-3-5-sonnet-20241022",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+		{
+			"id":       "claude-2.1",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+		{
+			"id":       "claude-2.0",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "anthropic",
+		},
+	}
 }
 
 // getGeminiModels 获取Gemini模型列表
 func (s *MultiProviderServer) getGeminiModels() []map[string]interface{} {
-	return []map[string]interface{}{}
+	return []map[string]interface{}{
+		{
+			"id":       "gemini-2.5-flash",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "google",
+		},
+		{
+			"id":       "gemini-2.5-pro",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "google",
+		},
+		{
+			"id":       "gemini-1.5-flash",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "google",
+		},
+		{
+			"id":       "gemini-1.5-pro",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "google",
+		},
+		{
+			"id":       "gemini-pro",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "google",
+		},
+		{
+			"id":       "gemini-pro-vision",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": "google",
+		},
+	}
 }
 
 // hasGroupAccess 检查代理密钥是否有访问指定分组的权限
@@ -754,9 +903,95 @@ func (s *MultiProviderServer) getProviderOwner(providerType string) string {
 func (s *MultiProviderServer) handleAvailableModels(c *gin.Context) {
 	groupID := c.Param("groupId")
 
-	// 直接调用proxy的HandleModels方法来获取提供商的所有可用模型
-	c.Request.URL.RawQuery = fmt.Sprintf("provider_group=%s", groupID)
-	s.proxy.HandleModels(c)
+	// 获取分组配置
+	group, exists := s.configManager.GetGroup(groupID)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"message": "Group not found",
+				"type":    "not_found",
+				"code":    "group_not_found",
+			},
+		})
+		return
+	}
+
+	// 检查分组是否启用
+	if !group.Enabled {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Group is disabled",
+				"type":    "group_disabled",
+				"code":    "group_disabled",
+			},
+		})
+		return
+	}
+
+	// 检查是否有API密钥
+	if len(group.APIKeys) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "No API keys configured for this group",
+				"type":    "no_api_keys",
+				"code":    "no_api_keys",
+			},
+		})
+		return
+	}
+
+	// 创建提供商配置
+	providerConfig := &providers.ProviderConfig{
+		BaseURL:      group.BaseURL,
+		APIKey:       group.APIKeys[0], // 使用第一个API密钥
+		Timeout:      group.Timeout,
+		MaxRetries:   group.MaxRetries,
+		Headers:      group.Headers,
+		ProviderType: group.ProviderType,
+	}
+
+	// 创建提供商实例
+	factory := providers.NewDefaultProviderFactory()
+	provider, err := factory.CreateProvider(providerConfig)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"message": "Failed to create provider: " + err.Error(),
+				"type":    "provider_creation_failed",
+				"code":    "provider_creation_failed",
+			},
+		})
+		return
+	}
+
+	// 获取模型列表
+	ctx := c.Request.Context()
+	rawModels, err := provider.GetModels(ctx)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": gin.H{
+				"message": "Failed to get models: " + err.Error(),
+				"type":    "models_fetch_failed",
+				"code":    "models_fetch_failed",
+			},
+		})
+		return
+	}
+
+	// 标准化模型数据格式
+	standardizedModels := s.proxy.StandardizeModelsResponse(rawModels, group.ProviderType)
+
+	// 返回结果
+	c.JSON(http.StatusOK, gin.H{
+		"object": "list",
+		"data": map[string]interface{}{
+			groupID: map[string]interface{}{
+				"group_name":    group.Name,
+				"provider_type": group.ProviderType,
+				"models":        standardizedModels,
+			},
+		},
+	})
 }
 
 // handleAvailableModelsByType 根据提供商类型和配置获取可用模型（用于新建分组时的模型选择）

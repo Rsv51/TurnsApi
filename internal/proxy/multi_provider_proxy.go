@@ -677,49 +677,106 @@ func (p *MultiProviderProxy) standardizeModelsResponse(rawModels interface{}, pr
 func (p *MultiProviderProxy) standardizeGeminiModels(rawModels interface{}) interface{} {
 	// 尝试解析Gemini响应格式
 	if modelsMap, ok := rawModels.(map[string]interface{}); ok {
-		if modelsArray, exists := modelsMap["models"]; exists {
-			if models, ok := modelsArray.([]interface{}); ok {
+		// 检查是否有data字段（Gemini提供商返回的格式）
+		if modelsArray, exists := modelsMap["data"]; exists {
+			// 尝试多种类型断言
+			var models []map[string]interface{}
+			var ok bool
+
+			// 首先尝试 []map[string]interface{}
+			if typedModels, typeOk := modelsArray.([]map[string]interface{}); typeOk {
+				models = typedModels
+				ok = true
+			} else if interfaceModels, typeOk := modelsArray.([]interface{}); typeOk {
+				// 如果是 []interface{}，尝试转换每个元素
+				models = make([]map[string]interface{}, 0, len(interfaceModels))
+				for _, item := range interfaceModels {
+					if modelMap, mapOk := item.(map[string]interface{}); mapOk {
+						models = append(models, modelMap)
+					}
+				}
+				ok = len(models) > 0
+			}
+
+			if ok && len(models) > 0 {
 				// 转换为OpenAI格式
 				standardModels := make([]map[string]interface{}, 0)
-				for _, model := range models {
-					if modelMap, ok := model.(map[string]interface{}); ok {
-						// 提取模型名称
-						var modelID string
-						if name, exists := modelMap["name"]; exists {
-							if nameStr, ok := name.(string); ok {
-								// Gemini模型名称格式: "models/gemini-pro"
-								parts := strings.Split(nameStr, "/")
-								if len(parts) > 1 {
-									modelID = parts[len(parts)-1]
-								} else {
-									modelID = nameStr
-								}
-							}
+				for _, modelMap := range models {
+					// 提取模型ID - Gemini提供商已经处理过了，直接使用id字段
+					var modelID string
+					if id, exists := modelMap["id"]; exists {
+						if idStr, idOk := id.(string); idOk {
+							modelID = idStr
+						}
+					}
+
+					if modelID != "" {
+						standardModel := map[string]interface{}{
+							"id":       modelID,
+							"object":   "model",
+							"owned_by": "google",
 						}
 
-						if modelID != "" {
-							standardModel := map[string]interface{}{
-								"id":       modelID,
-								"object":   "model",
-								"owned_by": "google",
-							}
-
-							// 添加其他可用信息
-							if displayName, exists := modelMap["displayName"]; exists {
-								standardModel["display_name"] = displayName
-							}
-							if description, exists := modelMap["description"]; exists {
-								standardModel["description"] = description
-							}
-
-							standardModels = append(standardModels, standardModel)
+						// 添加其他可用信息
+						if created, exists := modelMap["created"]; exists {
+							standardModel["created"] = created
 						}
+
+						standardModels = append(standardModels, standardModel)
 					}
 				}
 
 				return map[string]interface{}{
 					"object": "list",
 					"data":   standardModels,
+				}
+			}
+		} else {
+			// 检查是否有models字段（原始Google API格式）
+			if modelsArray, exists := modelsMap["models"]; exists {
+				if models, ok := modelsArray.([]interface{}); ok {
+					// 转换为OpenAI格式
+					standardModels := make([]map[string]interface{}, 0)
+					for _, model := range models {
+						if modelMap, ok := model.(map[string]interface{}); ok {
+							// 提取模型名称
+							var modelID string
+							if name, exists := modelMap["name"]; exists {
+								if nameStr, ok := name.(string); ok {
+									// Gemini模型名称格式: "models/gemini-pro"
+									parts := strings.Split(nameStr, "/")
+									if len(parts) > 1 {
+										modelID = parts[len(parts)-1]
+									} else {
+										modelID = nameStr
+									}
+								}
+							}
+
+							if modelID != "" {
+								standardModel := map[string]interface{}{
+									"id":       modelID,
+									"object":   "model",
+									"owned_by": "google",
+								}
+
+								// 添加其他可用信息
+								if displayName, exists := modelMap["displayName"]; exists {
+									standardModel["display_name"] = displayName
+								}
+								if description, exists := modelMap["description"]; exists {
+									standardModel["description"] = description
+								}
+
+								standardModels = append(standardModels, standardModel)
+							}
+						}
+					}
+
+					return map[string]interface{}{
+						"object": "list",
+						"data":   standardModels,
+					}
 				}
 			}
 		}
