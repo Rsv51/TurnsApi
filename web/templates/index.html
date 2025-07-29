@@ -7,6 +7,23 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        /* 自定义样式 */
+        .code-block {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+        .tab-button {
+            transition: all 0.2s ease-in-out;
+        }
+        .tab-button:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+    </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto px-4 py-8">
@@ -25,15 +42,18 @@
                 <a href="#api-docs" class="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200">
                     API 文档
                 </a>
+                <a href="#api-docs" onclick="switchToGeminiTab()" class="bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg font-medium transition duration-200">
+                    Gemini 原生 API
+                </a>
             </div>
         </div>
 
         <!-- Features -->
-        <div class="grid md:grid-cols-4 gap-6 mb-12">
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <div class="bg-white rounded-lg shadow-md p-6">
                 <div class="text-blue-500 text-3xl mb-4">🌐</div>
                 <h3 class="text-xl font-semibold mb-2">多提供商支持</h3>
-                <p class="text-gray-600">支持OpenAI、Gemini、Anthropic等多个AI提供商，统一API接口</p>
+                <p class="text-gray-600">支持OpenAI、Gemini、Anthropic等多个AI提供商，提供OpenAI兼容和原生API接口</p>
             </div>
             <div class="bg-white rounded-lg shadow-md p-6">
                 <div class="text-green-500 text-3xl mb-4">🔄</div>
@@ -52,9 +72,71 @@
             </div>
         </div>
 
+        <!-- Gemini Thinking Mode Highlight -->
+        <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg shadow-md p-8 mb-12 border border-blue-200">
+            <div class="flex items-center justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center mb-4">
+                        <div class="text-4xl mr-4">🧠</div>
+                        <div>
+                            <h3 class="text-2xl font-bold text-gray-800 mb-2">Gemini 思考模式</h3>
+                            <p class="text-gray-600">支持 Gemini 2.5 系列模型的思考模式，获取模型的完整思考过程</p>
+                        </div>
+                    </div>
+                    <div class="grid md:grid-cols-3 gap-4 text-sm">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                            </svg>
+                            <span>原汁原味的思考内容</span>
+                        </div>
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                            </svg>
+                            <span>支持流式和非流式</span>
+                        </div>
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                            </svg>
+                            <span>详细的token统计</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="hidden lg:block">
+                    <div class="bg-white rounded-lg p-4 shadow-sm border">
+                        <div class="text-xs text-gray-500 mb-2">示例响应</div>
+                        <div class="font-mono text-xs text-gray-700">
+                            <div class="text-blue-600">"thought": true</div>
+                            <div class="text-green-600">"thoughtsTokenCount": 50</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- API Documentation -->
         <div id="api-docs" class="bg-white rounded-lg shadow-md p-8 mb-8">
             <h2 class="text-2xl font-bold mb-6">API 使用说明</h2>
+
+            <!-- API Tabs -->
+            <div class="mb-6" x-data="{ activeTab: 'openai' }">
+                <div class="flex border-b border-gray-200">
+                    <button @click="activeTab = 'openai'"
+                            :class="activeTab === 'openai' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                            class="tab-button py-2 px-4 border-b-2 font-medium text-sm">
+                        OpenAI 兼容接口
+                    </button>
+                    <button @click="activeTab = 'gemini'"
+                            :class="activeTab === 'gemini' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                            class="tab-button py-2 px-4 border-b-2 font-medium text-sm">
+                        Gemini 原生接口
+                    </button>
+                </div>
+
+                <!-- OpenAI Compatible API -->
+                <div x-show="activeTab === 'openai'" class="mt-6">
             
             <div class="mb-6">
                 <h3 class="text-lg font-semibold mb-3">端点地址</h3>
@@ -146,6 +228,198 @@
                     </table>
                 </div>
             </div>
+                </div>
+
+                <!-- Gemini Native API -->
+                <div x-show="activeTab === 'gemini'" class="mt-6">
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-3">Gemini 原生接口端点</h3>
+                        <div class="bg-gray-100 p-4 rounded-lg space-y-2">
+                            <div><code class="text-sm">POST /v1beta/models/{model}:generateContent</code> - 非流式生成</div>
+                            <div><code class="text-sm">POST /v1beta/models/{model}:streamGenerateContent</code> - 流式生成</div>
+                            <div><code class="text-sm">GET /v1beta/models</code> - 获取模型列表</div>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-3">非流式请求示例</h3>
+                        <div class="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto">
+                            <pre class="code-block"><code>curl -X POST http://localhost:8080/v1beta/models/gemini-2.5-pro:generateContent \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "请解释一下量子计算的基本原理"
+          }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "temperature": 0.7,
+      "maxOutputTokens": 1000,
+      "thinkingConfig": {
+        "includeThoughts": true
+      }
+    }
+  }'</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-3">流式请求示例</h3>
+                        <div class="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto">
+                            <pre class="code-block"><code>curl -X POST http://localhost:8080/v1beta/models/gemini-2.5-pro:streamGenerateContent \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "写一个关于人工智能的故事"
+          }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "temperature": 0.8,
+      "maxOutputTokens": 2000,
+      "thinkingConfig": {
+        "includeThoughts": true
+      }
+    }
+  }'</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-3">支持的模型</h3>
+                        <div class="bg-gray-50 p-4 rounded-lg">
+                            <ul class="space-y-2 text-sm">
+                                <li><code>gemini-2.5-pro</code> - Gemini 2.5 Pro (支持思考模式)</li>
+                                <li><code>gemini-2.5-flash</code> - Gemini 2.5 Flash (支持思考模式)</li>
+                                <li><code>gemini-1.5-pro</code> - Gemini 1.5 Pro</li>
+                                <li><code>gemini-1.5-flash</code> - Gemini 1.5 Flash</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-3">Gemini 原生参数说明</h3>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full table-auto">
+                                <thead>
+                                    <tr class="bg-gray-50">
+                                        <th class="px-4 py-2 text-left">参数</th>
+                                        <th class="px-4 py-2 text-left">类型</th>
+                                        <th class="px-4 py-2 text-left">必需</th>
+                                        <th class="px-4 py-2 text-left">说明</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="border-t">
+                                        <td class="px-4 py-2"><code>contents</code></td>
+                                        <td class="px-4 py-2">array</td>
+                                        <td class="px-4 py-2">是</td>
+                                        <td class="px-4 py-2">对话内容数组，包含role和parts</td>
+                                    </tr>
+                                    <tr class="border-t">
+                                        <td class="px-4 py-2"><code>generationConfig</code></td>
+                                        <td class="px-4 py-2">object</td>
+                                        <td class="px-4 py-2">否</td>
+                                        <td class="px-4 py-2">生成配置参数</td>
+                                    </tr>
+                                    <tr class="border-t">
+                                        <td class="px-4 py-2"><code>temperature</code></td>
+                                        <td class="px-4 py-2">number</td>
+                                        <td class="px-4 py-2">否</td>
+                                        <td class="px-4 py-2">温度参数 (0-2)</td>
+                                    </tr>
+                                    <tr class="border-t">
+                                        <td class="px-4 py-2"><code>maxOutputTokens</code></td>
+                                        <td class="px-4 py-2">integer</td>
+                                        <td class="px-4 py-2">否</td>
+                                        <td class="px-4 py-2">最大输出token数</td>
+                                    </tr>
+                                    <tr class="border-t">
+                                        <td class="px-4 py-2"><code>thinkingConfig</code></td>
+                                        <td class="px-4 py-2">object</td>
+                                        <td class="px-4 py-2">否</td>
+                                        <td class="px-4 py-2">思考模式配置 (仅2.5系列)</td>
+                                    </tr>
+                                    <tr class="border-t">
+                                        <td class="px-4 py-2"><code>includeThoughts</code></td>
+                                        <td class="px-4 py-2">boolean</td>
+                                        <td class="px-4 py-2">否</td>
+                                        <td class="px-4 py-2">是否包含思考内容在响应中</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-3">思考模式响应示例</h3>
+                        <div class="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto">
+                            <pre class="code-block"><code>{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "我需要思考一下量子计算的基本原理...",
+            "thought": true
+          },
+          {
+            "text": "量子计算是基于量子力学原理的计算方式..."
+          }
+        ],
+        "role": "model"
+      },
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 18,
+    "candidatesTokenCount": 150,
+    "totalTokenCount": 168,
+    "thoughtsTokenCount": 50
+  }
+}</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold mb-3">特殊功能</h3>
+                        <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div class="ml-3">
+                                    <h4 class="text-sm font-medium text-blue-800">思考模式 (Thinking Mode)</h4>
+                                    <div class="mt-2 text-sm text-blue-700">
+                                        <p>Gemini 2.5 系列模型支持思考模式，可以在响应中包含模型的思考过程：</p>
+                                        <ul class="list-disc list-inside mt-2 space-y-1">
+                                            <li>设置 <code>thinkingConfig.includeThoughts: true</code> 启用</li>
+                                            <li>响应中包含 <code>"thought": true</code> 的部分为思考内容</li>
+                                            <li>使用统计中包含 <code>thoughtsTokenCount</code> 字段</li>
+                                            <li>思考内容保持原汁原味，不做任何处理</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Status Check -->
@@ -184,6 +458,16 @@
                     }
                 }
             }
+        }
+
+        // 切换到Gemini标签页的函数
+        function switchToGeminiTab() {
+            setTimeout(() => {
+                const geminiButton = document.querySelector('button[\\@click*="gemini"]');
+                if (geminiButton) {
+                    geminiButton.click();
+                }
+            }, 100);
         }
     </script>
 </body>

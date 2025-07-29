@@ -12,18 +12,20 @@ import (
 
 // UserGroup 用户分组配置（避免循环导入）
 type UserGroup struct {
-	Name             string                 `yaml:"name" json:"name"`
-	ProviderType     string                 `yaml:"provider_type" json:"provider_type"`
-	BaseURL          string                 `yaml:"base_url" json:"base_url"`
-	Enabled          bool                   `yaml:"enabled" json:"enabled"`
-	Timeout          time.Duration          `yaml:"timeout" json:"timeout"`
-	MaxRetries       int                    `yaml:"max_retries" json:"max_retries"`
-	RotationStrategy string                 `yaml:"rotation_strategy" json:"rotation_strategy"`
-	APIKeys          []string               `yaml:"api_keys" json:"api_keys"`
-	Models           []string               `yaml:"models,omitempty" json:"models,omitempty"`
-	Headers          map[string]string      `yaml:"headers,omitempty" json:"headers,omitempty"`
-	RequestParams    map[string]interface{} `yaml:"request_params,omitempty" json:"request_params,omitempty"` // JSON请求参数覆盖
-	ModelMappings    map[string]string      `yaml:"model_mappings,omitempty" json:"model_mappings,omitempty"` // 模型名称映射：别名 -> 原始模型名
+	Name              string                 `yaml:"name" json:"name"`
+	ProviderType      string                 `yaml:"provider_type" json:"provider_type"`
+	BaseURL           string                 `yaml:"base_url" json:"base_url"`
+	Enabled           bool                   `yaml:"enabled" json:"enabled"`
+	Timeout           time.Duration          `yaml:"timeout" json:"timeout"`
+	MaxRetries        int                    `yaml:"max_retries" json:"max_retries"`
+	RotationStrategy  string                 `yaml:"rotation_strategy" json:"rotation_strategy"`
+	APIKeys           []string               `yaml:"api_keys" json:"api_keys"`
+	Models            []string               `yaml:"models,omitempty" json:"models,omitempty"`
+	Headers           map[string]string      `yaml:"headers,omitempty" json:"headers,omitempty"`
+	RequestParams     map[string]interface{} `yaml:"request_params,omitempty" json:"request_params,omitempty"` // JSON请求参数覆盖
+	ModelMappings     map[string]string      `yaml:"model_mappings,omitempty" json:"model_mappings,omitempty"` // 模型名称映射：别名 -> 原始模型名
+	UseNativeResponse bool                   `yaml:"use_native_response,omitempty" json:"use_native_response,omitempty"` // 是否使用原生接口响应格式
+	RPMLimit          int                    `yaml:"rpm_limit,omitempty" json:"rpm_limit,omitempty"`                     // 每分钟请求数限制
 }
 
 // GroupsDB 分组数据库管理器
@@ -65,6 +67,8 @@ func (gdb *GroupsDB) initTables() error {
 		headers TEXT, -- JSON object of custom headers
 		request_params TEXT, -- JSON object of request parameters override
 		model_mappings TEXT, -- JSON object of model name mappings: alias -> original
+		use_native_response BOOLEAN NOT NULL DEFAULT 0, -- 是否使用原生接口响应格式
+		rpm_limit INTEGER NOT NULL DEFAULT 0, -- 每分钟请求数限制，0表示无限制
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
@@ -113,6 +117,11 @@ func (gdb *GroupsDB) initTables() error {
 	// 执行数据库迁移，为分组表添加model_mappings字段
 	if err := gdb.migrateModelMappingsField(); err != nil {
 		return fmt.Errorf("failed to migrate model_mappings field: %w", err)
+	}
+
+	// 执行数据库迁移，为分组表添加use_native_response和rpm_limit字段
+	if err := gdb.migrateNewFields(); err != nil {
+		return fmt.Errorf("failed to migrate new fields: %w", err)
 	}
 
 	// 创建索引
@@ -269,6 +278,56 @@ func (gdb *GroupsDB) migrateModelMappingsField() error {
 	return nil
 }
 
+// migrateNewFields 迁移分组表，添加use_native_response和rpm_limit字段
+func (gdb *GroupsDB) migrateNewFields() error {
+	// 检查字段是否已存在
+	checkColumnSQL := `PRAGMA table_info(provider_groups);`
+	rows, err := gdb.db.Query(checkColumnSQL)
+	if err != nil {
+		return fmt.Errorf("failed to check table info: %w", err)
+	}
+	defer rows.Close()
+
+	existingColumns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, pk int
+		var defaultValue interface{}
+
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("failed to scan column info: %w", err)
+		}
+		existingColumns[name] = true
+	}
+
+	var migrations []string
+
+	// 检查并添加use_native_response字段
+	if !existingColumns["use_native_response"] {
+		migrations = append(migrations, "ALTER TABLE provider_groups ADD COLUMN use_native_response BOOLEAN NOT NULL DEFAULT 0;")
+	}
+
+	// 检查并添加rpm_limit字段
+	if !existingColumns["rpm_limit"] {
+		migrations = append(migrations, "ALTER TABLE provider_groups ADD COLUMN rpm_limit INTEGER NOT NULL DEFAULT 0;")
+	}
+
+	// 执行迁移
+	for _, migration := range migrations {
+		if _, err := gdb.db.Exec(migration); err != nil {
+			return fmt.Errorf("failed to execute migration '%s': %w", migration, err)
+		}
+		log.Printf("Executed migration: %s", migration)
+	}
+
+	if len(migrations) > 0 {
+		log.Printf("Provider groups table migration completed, added %d new columns", len(migrations))
+	}
+
+	return nil
+}
+
 // UpdateAPIKeyValidation 更新API密钥的验证状态
 func (gdb *GroupsDB) UpdateAPIKeyValidation(groupID, apiKey string, isValid bool, validationError string) error {
 	updateSQL := `
@@ -363,8 +422,9 @@ func (gdb *GroupsDB) SaveGroup(groupID string, group *UserGroup) error {
 	upsertGroupSQL := `
 	INSERT INTO provider_groups (
 		group_id, name, provider_type, base_url, enabled,
-		timeout_seconds, max_retries, rotation_strategy, models, headers, request_params, model_mappings, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		timeout_seconds, max_retries, rotation_strategy, models, headers, request_params, model_mappings,
+		use_native_response, rpm_limit, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	ON CONFLICT(group_id) DO UPDATE SET
 		name = excluded.name,
 		provider_type = excluded.provider_type,
@@ -377,12 +437,15 @@ func (gdb *GroupsDB) SaveGroup(groupID string, group *UserGroup) error {
 		headers = excluded.headers,
 		request_params = excluded.request_params,
 		model_mappings = excluded.model_mappings,
+		use_native_response = excluded.use_native_response,
+		rpm_limit = excluded.rpm_limit,
 		updated_at = CURRENT_TIMESTAMP;`
 
 	_, err = tx.Exec(upsertGroupSQL,
 		groupID, group.Name, group.ProviderType, group.BaseURL,
 		group.Enabled, int(group.Timeout.Seconds()), group.MaxRetries,
-		group.RotationStrategy, string(modelsJSON), string(headersJSON), string(requestParamsJSON), string(modelMappingsJSON))
+		group.RotationStrategy, string(modelsJSON), string(headersJSON), string(requestParamsJSON), string(modelMappingsJSON),
+		group.UseNativeResponse, group.RPMLimit)
 	if err != nil {
 		return fmt.Errorf("failed to save group: %w", err)
 	}
@@ -413,7 +476,8 @@ func (gdb *GroupsDB) LoadGroup(groupID string) (*UserGroup, error) {
 	// 查询分组信息
 	groupSQL := `
 	SELECT name, provider_type, base_url, enabled,
-		   timeout_seconds, max_retries, rotation_strategy, models, headers, request_params, model_mappings
+		   timeout_seconds, max_retries, rotation_strategy, models, headers, request_params, model_mappings,
+		   use_native_response, rpm_limit
 	FROM provider_groups WHERE group_id = ?`
 
 	var group UserGroup
@@ -424,7 +488,8 @@ func (gdb *GroupsDB) LoadGroup(groupID string) (*UserGroup, error) {
 	err := gdb.db.QueryRow(groupSQL, groupID).Scan(
 		&group.Name, &group.ProviderType, &group.BaseURL,
 		&group.Enabled, &timeoutSeconds, &group.MaxRetries, &group.RotationStrategy,
-		&modelsJSON, &headersJSON, &requestParamsJSON, &modelMappingsJSON)
+		&modelsJSON, &headersJSON, &requestParamsJSON, &modelMappingsJSON,
+		&group.UseNativeResponse, &group.RPMLimit)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("group not found: %s", groupID)
@@ -488,7 +553,8 @@ func (gdb *GroupsDB) LoadAllGroups() (map[string]*UserGroup, error) {
 	// 查询所有分组
 	groupsSQL := `
 	SELECT group_id, name, provider_type, base_url, enabled,
-		   timeout_seconds, max_retries, rotation_strategy, models, headers, request_params, model_mappings
+		   timeout_seconds, max_retries, rotation_strategy, models, headers, request_params, model_mappings,
+		   use_native_response, rpm_limit
 	FROM provider_groups ORDER BY created_at DESC`
 
 	rows, err := gdb.db.Query(groupsSQL)
@@ -508,7 +574,8 @@ func (gdb *GroupsDB) LoadAllGroups() (map[string]*UserGroup, error) {
 
 		err = rows.Scan(&groupID, &group.Name, &group.ProviderType, &group.BaseURL,
 			&group.Enabled, &timeoutSeconds, &group.MaxRetries,
-			&group.RotationStrategy, &modelsJSON, &headersJSON, &requestParamsJSON, &modelMappingsJSON)
+			&group.RotationStrategy, &modelsJSON, &headersJSON, &requestParamsJSON, &modelMappingsJSON,
+			&group.UseNativeResponse, &group.RPMLimit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
 		}
@@ -581,7 +648,7 @@ func (gdb *GroupsDB) GetGroupsWithMetadata() (map[string]map[string]interface{},
 	groupsSQL := `
 	SELECT group_id, name, provider_type, base_url, enabled,
 		   timeout_seconds, max_retries, rotation_strategy, models, headers,
-		   created_at, updated_at
+		   use_native_response, rpm_limit, created_at, updated_at
 	FROM provider_groups ORDER BY created_at DESC`
 
 	rows, err := gdb.db.Query(groupsSQL)
@@ -594,13 +661,13 @@ func (gdb *GroupsDB) GetGroupsWithMetadata() (map[string]map[string]interface{},
 
 	for rows.Next() {
 		var groupID, name, providerType, baseURL, rotationStrategy, modelsJSON, headersJSON string
-		var enabled bool
-		var timeoutSeconds, maxRetries int
+		var enabled, useNativeResponse bool
+		var timeoutSeconds, maxRetries, rpmLimit int
 		var createdAt, updatedAt time.Time
 
 		err = rows.Scan(&groupID, &name, &providerType, &baseURL, &enabled,
 			&timeoutSeconds, &maxRetries, &rotationStrategy, &modelsJSON, &headersJSON,
-			&createdAt, &updatedAt)
+			&useNativeResponse, &rpmLimit, &createdAt, &updatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
 		}
@@ -639,19 +706,21 @@ func (gdb *GroupsDB) GetGroupsWithMetadata() (map[string]map[string]interface{},
 
 		// 构建分组信息
 		groupInfo := map[string]interface{}{
-			"group_id":          groupID,
-			"group_name":        name,
-			"provider_type":     providerType,
-			"base_url":          baseURL,
-			"enabled":           enabled,
-			"timeout":           time.Duration(timeoutSeconds) * time.Second,
-			"max_retries":       maxRetries,
-			"rotation_strategy": rotationStrategy,
-			"api_keys":          apiKeys,
-			"models":            models,
-			"headers":           headers,
-			"created_at":        createdAt,
-			"updated_at":        updatedAt,
+			"group_id":            groupID,
+			"group_name":          name,
+			"provider_type":       providerType,
+			"base_url":            baseURL,
+			"enabled":             enabled,
+			"timeout":             time.Duration(timeoutSeconds) * time.Second,
+			"max_retries":         maxRetries,
+			"rotation_strategy":   rotationStrategy,
+			"api_keys":            apiKeys,
+			"models":              models,
+			"headers":             headers,
+			"use_native_response": useNativeResponse,
+			"rpm_limit":           rpmLimit,
+			"created_at":          createdAt,
+			"updated_at":          updatedAt,
 		}
 
 		groups[groupID] = groupInfo

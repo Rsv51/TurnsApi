@@ -617,12 +617,9 @@
                     try {
                         const response = await fetch('/admin/keys');
                         const result = await response.json();
-                        console.log('Keys response:', result); // 调试日志
                         if (result.keys && Array.isArray(result.keys)) {
                             this.keys = result.keys;
-                            console.log('Loaded keys:', this.keys.length, this.keys);
                         } else {
-                            console.warn('Keys data is not an array:', result.keys);
                             this.keys = [];
                         }
                         this.filterKeys();
@@ -673,7 +670,6 @@
                     const start = (this.currentPage - 1) * this.pageSize;
                     const end = start + this.pageSize;
                     this.paginatedKeys = this.filteredKeys.slice(start, end);
-                    console.log('Paginated keys:', this.paginatedKeys.length, this.paginatedKeys);
                 },
 
                 previousPage() {

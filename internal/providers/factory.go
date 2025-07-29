@@ -18,6 +18,9 @@ func (f *DefaultProviderFactory) CreateProvider(config *ProviderConfig) (Provide
 	switch config.ProviderType {
 	case "openai":
 		return NewOpenAIProvider(config), nil
+	case "openrouter":
+		// OpenRouter使用OpenAI格式，但是独立的提供商类型
+		return NewOpenAIProvider(config), nil
 	case "gemini":
 		return NewGeminiProvider(config), nil
 	case "anthropic":
@@ -32,7 +35,7 @@ func (f *DefaultProviderFactory) CreateProvider(config *ProviderConfig) (Provide
 
 // GetSupportedTypes 获取支持的提供商类型
 func (f *DefaultProviderFactory) GetSupportedTypes() []string {
-	return []string{"openai", "gemini", "anthropic", "azure_openai"}
+	return []string{"openai", "openrouter", "gemini", "anthropic", "azure_openai"}
 }
 
 // ProviderManager 提供商管理器

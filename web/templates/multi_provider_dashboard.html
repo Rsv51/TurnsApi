@@ -610,50 +610,93 @@
 
                         <!-- 配置参数区域 -->
                         <div class="bg-gray-50 rounded-lg p-6">
-                            <div class="flex items-center space-x-2 mb-4">
+                            <div class="flex items-center space-x-2 mb-6">
                                 <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4"></path>
                                 </svg>
                                 <h4 class="text-lg font-semibold text-gray-900">配置参数</h4>
                             </div>
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">超时时间（秒）</label>
-                                    <input type="number" x-model="groupFormData.timeout" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" min="1" max="600" placeholder="30">
-                                    <p class="text-xs text-gray-500 mt-1">请求超时时间，建议30-120秒</p>
-                                </div>
+                            <!-- 基础配置 -->
+                            <div class="mb-6">
+                                <h5 class="text-sm font-medium text-gray-800 mb-4 flex items-center">
+                                    <svg class="w-4 h-4 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    </svg>
+                                    基础配置
+                                </h5>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div class="bg-white rounded-lg p-4 border border-gray-200 shadow-sm">
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                                            <svg class="w-4 h-4 inline mr-1 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                            </svg>
+                                            超时时间（秒）
+                                        </label>
+                                        <input type="number" x-model="groupFormData.timeout" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" min="1" max="600" placeholder="30">
+                                        <p class="text-xs text-gray-500 mt-2">请求超时时间，建议30-120秒</p>
+                                    </div>
 
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">最大重试次数</label>
-                                    <input type="number" x-model="groupFormData.max_retries" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" min="0" max="10" placeholder="3">
-                                    <p class="text-xs text-gray-500 mt-1">失败后的重试次数，建议1-5次</p>
-                                </div>
+                                    <div class="bg-white rounded-lg p-4 border border-gray-200 shadow-sm">
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                                            <svg class="w-4 h-4 inline mr-1 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                                            </svg>
+                                            最大重试次数
+                                        </label>
+                                        <input type="number" x-model="groupFormData.max_retries" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" min="0" max="10" placeholder="3">
+                                        <p class="text-xs text-gray-500 mt-2">失败后的重试次数，建议1-5次</p>
+                                    </div>
 
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">轮换策略</label>
-                                    <select x-model="groupFormData.rotation_strategy" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                                        <option value="round_robin">轮询 (Round Robin)</option>
-                                        <option value="random">随机 (Random)</option>
-                                        <option value="least_used">最少使用 (Least Used)</option>
-                                    </select>
-                                    <p class="text-xs text-gray-500 mt-1">多个密钥时的选择策略</p>
+                                    <div class="bg-white rounded-lg p-4 border border-gray-200 shadow-sm">
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                                            <svg class="w-4 h-4 inline mr-1 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                                            </svg>
+                                            轮换策略
+                                        </label>
+                                        <select x-model="groupFormData.rotation_strategy" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                            <option value="round_robin">轮询 (Round Robin)</option>
+                                            <option value="random">随机 (Random)</option>
+                                            <option value="least_used">最少使用 (Least Used)</option>
+                                        </select>
+                                        <p class="text-xs text-gray-500 mt-2">多个密钥时的选择策略</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- RPM限制配置 -->
+                            <div class="mb-6">
+                                <h5 class="text-sm font-medium text-gray-800 mb-4 flex items-center">
+                                    <svg class="w-4 h-4 mr-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>
+                                    RPM限制
+                                </h5>
+                                <div class="bg-white rounded-lg p-4 border border-gray-200 shadow-sm">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">每分钟请求数限制</label>
+                                    <input type="number" x-model="groupFormData.rpm_limit" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="0">
+                                    <p class="text-xs text-gray-500 mt-2">每分钟请求数限制，0表示无限制</p>
                                 </div>
                             </div>
 
                             <!-- 高级选项 -->
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label class="flex items-center space-x-2">
-                                        <input type="checkbox" x-model="groupFormData.use_native_response" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                                        <span class="text-sm font-medium text-gray-700">使用原生接口响应</span>
+                            <div>
+                                <h5 class="text-sm font-medium text-gray-800 mb-4 flex items-center">
+                                    <svg class="w-4 h-4 mr-2 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    </svg>
+                                    高级选项
+                                </h5>
+                                <div class="bg-white rounded-lg p-4 border border-gray-200 shadow-sm">
+                                    <label class="flex items-start space-x-3 cursor-pointer">
+                                        <input type="checkbox" x-model="groupFormData.use_native_response" class="mt-1 rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+                                        <div>
+                                            <span class="text-sm font-medium text-gray-700">使用原生接口响应</span>
+                                            <p class="text-xs text-gray-500 mt-1">勾选后将返回提供商的原生响应格式，而不是OpenAI兼容格式</p>
+                                        </div>
                                     </label>
-                                    <p class="text-xs text-gray-500 mt-1">勾选后将返回提供商的原生响应格式，而不是OpenAI兼容格式</p>
-                                </div>
-
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-2">RPM限制</label>
-                                    <input type="number" x-model="groupFormData.rpm_limit" min="0" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="如: 60">
-                                    <p class="text-xs text-gray-500 mt-1">每分钟请求数限制，0表示无限制</p>
                                 </div>
                             </div>
                         </div>
@@ -1418,6 +1461,9 @@
 
 
                 async init() {
+                    // 初始化验证状态对象
+                    this.validatingGroups = {};
+
                     // 系统健康状态和提供商分组状态需要默认展示
                     await this.loadSystemHealth();
                     await this.loadProviderStatuses();
@@ -1429,6 +1475,14 @@
 
                     // 启动定时刷新系统健康状态（每30秒）
                     this.startSystemHealthRefresh();
+
+                    // 添加页面可见性变化监听器，确保用户回到页面时数据是最新的
+                    document.addEventListener('visibilitychange', () => {
+                        if (!document.hidden) {
+                            // 页面变为可见时，刷新数据
+                            this.loadProviderStatuses();
+                        }
+                    });
                 },
 
                 async loadSystemHealth() {
@@ -1717,8 +1771,16 @@
 
                 // 验证单个分组的密钥
                 async validateGroupKeys(groupId, provider) {
-                    // 设置验证状态
+                    // 确保 validatingGroups 对象存在并设置验证状态
+                    if (!this.validatingGroups) {
+                        this.validatingGroups = {};
+                    }
                     this.validatingGroups[groupId] = true;
+
+                    // 强制更新UI
+                    this.$nextTick(() => {
+                        this.validatingGroups = { ...this.validatingGroups };
+                    });
 
                     try {
                         // 获取分组的完整数据
@@ -1732,7 +1794,6 @@
 
                         if (!groupData || !groupData.api_keys || groupData.api_keys.length === 0) {
                             alert('该分组没有配置API密钥');
-                            this.validatingGroups[groupId] = false;
                             return;
                         }
 
@@ -1741,7 +1802,6 @@
 
                         if (validKeys.length === 0) {
                             alert('该分组没有有效的API密钥');
-                            this.validatingGroups[groupId] = false;
                             return;
                         }
 
@@ -1799,7 +1859,13 @@
                         alert(`验证分组密钥失败：${error.message}`);
                     } finally {
                         // 清除验证状态
-                        this.validatingGroups[groupId] = false;
+                        if (this.validatingGroups) {
+                            this.validatingGroups[groupId] = false;
+                            // 强制更新UI
+                            this.$nextTick(() => {
+                                this.validatingGroups = { ...this.validatingGroups };
+                            });
+                        }
                     }
                 },
 
@@ -1879,6 +1945,31 @@
                     this.showCreateGroupModal = true;
                 },
 
+                // 强制刷新表单UI显示
+                forceRefreshFormUI() {
+                    setTimeout(() => {
+                        // 获取所有需要更新的表单元素
+                        const formElements = [
+                            { selector: 'input[x-model="groupFormData.rpm_limit"]', value: this.groupFormData.rpm_limit, event: 'input' },
+                            { selector: 'input[x-model="groupFormData.use_native_response"]', value: this.groupFormData.use_native_response, event: 'change', isCheckbox: true },
+                            { selector: 'input[x-model="groupFormData.timeout"]', value: this.groupFormData.timeout, event: 'input' },
+                            { selector: 'input[x-model="groupFormData.max_retries"]', value: this.groupFormData.max_retries, event: 'input' }
+                        ];
+
+                        formElements.forEach(element => {
+                            const el = document.querySelector(element.selector);
+                            if (el) {
+                                if (element.isCheckbox) {
+                                    el.checked = Boolean(element.value);
+                                } else {
+                                    el.value = element.value;
+                                }
+                                el.dispatchEvent(new Event(element.event, { bubbles: true }));
+                            }
+                        });
+                    }, 100);
+                },
+
                 async editGroup(groupId, provider) {
                     this.editingGroupId = groupId;
 
@@ -1908,13 +1999,13 @@
                             provider_type: fullGroupData.provider_type || '',
                             base_url: fullGroupData.base_url || '',
                             enabled: fullGroupData.enabled !== false,
-                            timeout: fullGroupData.timeout || 30,
-                            max_retries: fullGroupData.max_retries || 3,
+                            timeout: parseInt(fullGroupData.timeout) || 30,
+                            max_retries: parseInt(fullGroupData.max_retries) || 3,
                             rotation_strategy: fullGroupData.rotation_strategy || 'round_robin',
                             api_keys: apiKeys,
                             models: fullGroupData.models || [],
-                            use_native_response: fullGroupData.use_native_response || false,
-                            rpm_limit: fullGroupData.rpm_limit || 0
+                            use_native_response: Boolean(fullGroupData.use_native_response),
+                            rpm_limit: parseInt(fullGroupData.rpm_limit) || 0
                         };
 
                         this.modelsText = (fullGroupData.models || []).join('\n');
@@ -1949,7 +2040,15 @@
                         this.invalidKeyIndexes = [];
                         this.requestParamsValidationMessage = '';
                         this.requestParamsValidationError = false;
+
+
+
                         this.showEditGroupModal = true;
+
+                        // 延迟刷新表单UI，确保模态框完全显示后再刷新
+                        setTimeout(() => {
+                            this.forceRefreshFormUI();
+                        }, 200);
 
                         // 移除自动加载验证状态，改为手动触发
                         // await this.loadKeyValidationStatus(groupId);
@@ -2044,6 +2143,11 @@
                         }
                         this.groupFormData.model_mappings = modelMappings;
 
+                        // 确保数字字段是正确的类型
+                        this.groupFormData.timeout = parseInt(this.groupFormData.timeout) || 30;
+                        this.groupFormData.max_retries = parseInt(this.groupFormData.max_retries) || 3;
+                        this.groupFormData.rpm_limit = parseInt(this.groupFormData.rpm_limit) || 0;
+
                         const url = this.showCreateGroupModal ? '/admin/groups' : `/admin/groups/${this.editingGroupId}`;
                         const method = this.showCreateGroupModal ? 'POST' : 'PUT';
 
@@ -2059,9 +2163,26 @@
 
                         if (response.ok) {
                             this.showMessage(data.message, 'success');
+
+                            // 如果是编辑模式，更新本地数据
+                            if (!this.showCreateGroupModal && this.editingGroupId) {
+                                // 更新本地providerStatuses中的数据
+                                if (this.providerStatuses[this.editingGroupId]) {
+                                    this.providerStatuses[this.editingGroupId].use_native_response = this.groupFormData.use_native_response;
+                                    this.providerStatuses[this.editingGroupId].rpm_limit = this.groupFormData.rpm_limit;
+                                }
+                            }
+
                             this.closeGroupModal();
                             // 重新加载提供商状态以显示新添加的分组
                             await this.loadProviderStatuses();
+
+                            // 额外的数据验证，确保保存的数据正确
+                            setTimeout(async () => {
+                                if (this.editingGroupId && this.providerStatuses[this.editingGroupId]) {
+                                    const savedData = this.providerStatuses[this.editingGroupId];
+                                }
+                            }, 500);
                         } else {
                             this.showMessage(data.message || '操作失败', 'error');
                         }

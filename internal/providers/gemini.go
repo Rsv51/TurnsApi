@@ -151,6 +151,12 @@ func (p *GeminiProvider) ChatCompletion(ctx context.Context, req *ChatCompletion
 		genConfig.StopSequences = req.Stop
 	}
 
+	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
+	genConfig.ThinkingConfig = &genai.ThinkingConfig{
+		IncludeThoughts: true,  // 包含思考内容在响应中
+		ThinkingBudget:  nil,   // 使用默认的动态思考预算
+	}
+
 	// 调用官方SDK
 	result, err := p.client.Models.GenerateContent(ctx, req.Model, contents, genConfig)
 
@@ -214,6 +220,12 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 	// 设置停止序列
 	if len(req.Stop) > 0 {
 		genConfig.StopSequences = req.Stop
+	}
+
+	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
+	genConfig.ThinkingConfig = &genai.ThinkingConfig{
+		IncludeThoughts: true,  // 包含思考内容在响应中
+		ThinkingBudget:  nil,   // 使用默认的动态思考预算
 	}
 
 	streamChan := make(chan StreamResponse, 10)
@@ -281,6 +293,110 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 
 		streamChan <- StreamResponse{
 			Data: []byte("data: [DONE]\n\n"),
+			Done: true,
+		}
+	}()
+
+	return streamChan, nil
+}
+
+// ChatCompletionStreamNative 发送原生格式流式聊天完成请求
+func (p *GeminiProvider) ChatCompletionStreamNative(ctx context.Context, req *ChatCompletionRequest) (<-chan StreamResponse, error) {
+	// 验证客户端
+	if p.client == nil {
+		return nil, fmt.Errorf("Gemini client not initialized, check API key")
+	}
+
+	// 检查配额限制
+	if p.quotaManager.ShouldSkipRequest() {
+		return nil, fmt.Errorf("Gemini API quota exceeded, skipping request (will retry after backoff period)")
+	}
+
+	// 转换消息格式为官方SDK格式
+	contents, err := p.convertToGenaiContents(req.Messages)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert messages: %w", err)
+	}
+
+	// 创建生成配置
+	genConfig := &genai.GenerateContentConfig{}
+
+	// 设置温度，默认为1.0以获得更有创意的回答
+	if req.Temperature != nil {
+		temperature := float32(*req.Temperature)
+		genConfig.Temperature = &temperature
+	} else {
+		temperature := float32(1.0)
+		genConfig.Temperature = &temperature
+	}
+
+	// 设置最大token数
+	if req.MaxTokens != nil {
+		maxTokens := int32(*req.MaxTokens)
+		genConfig.MaxOutputTokens = maxTokens
+	}
+
+	// 设置TopP
+	if req.TopP != nil {
+		topP := float32(*req.TopP)
+		genConfig.TopP = &topP
+	}
+
+	// 设置停止序列
+	if len(req.Stop) > 0 {
+		genConfig.StopSequences = req.Stop
+	}
+
+	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
+	genConfig.ThinkingConfig = &genai.ThinkingConfig{
+		IncludeThoughts: true,  // 包含思考内容在响应中
+		ThinkingBudget:  nil,   // 使用默认的动态思考预算
+	}
+
+	streamChan := make(chan StreamResponse, 10)
+
+	go func() {
+		defer close(streamChan)
+
+		// 使用官方SDK的真正流式功能
+		stream := p.client.Models.GenerateContentStream(ctx, req.Model, contents, genConfig)
+
+		// 处理流式响应 - 使用Go 1.23的迭代器语法，返回Gemini原生格式
+		for chunk, err := range stream {
+			if err != nil {
+				// 检查是否是配额错误
+				if p.isQuotaExceededError(err) {
+					p.quotaManager.RecordQuotaError()
+				}
+				streamChan <- StreamResponse{
+					Error: p.handleGeminiError(err),
+					Done:  true,
+				}
+				return
+			}
+
+			if chunk == nil {
+				continue
+			}
+
+			// 将Gemini原生响应转换为SSE格式
+			if chunkData, err := p.convertGeminiChunkToSSE(chunk); err == nil {
+				select {
+				case streamChan <- StreamResponse{
+					Data: chunkData,
+					Done: false,
+				}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+
+		// 记录成功请求
+		p.quotaManager.RecordSuccess()
+
+		// Gemini原生流式响应不需要[DONE]标记，直接结束
+		streamChan <- StreamResponse{
 			Done: true,
 		}
 	}()
@@ -780,4 +896,77 @@ func escapeJSONString(s string) string {
 	}
 	// 移除JSON编码添加的外层引号
 	return string(encoded[1 : len(encoded)-1])
+}
+
+// convertGeminiChunkToSSE 将Gemini原生响应块转换为SSE格式
+func (p *GeminiProvider) convertGeminiChunkToSSE(chunk *genai.GenerateContentResponse) ([]byte, error) {
+	// 构造Gemini原生响应格式
+	nativeResponse := map[string]interface{}{
+		"candidates": []map[string]interface{}{},
+	}
+
+	// 处理候选响应
+	for i, candidate := range chunk.Candidates {
+		candidateData := map[string]interface{}{
+			"content": map[string]interface{}{
+				"parts": []map[string]interface{}{},
+				"role":  "model",
+			},
+			"index": i,
+		}
+
+		// 处理内容部分
+		if candidate.Content != nil {
+			for _, part := range candidate.Content.Parts {
+				if part.Text != "" {
+					partData := map[string]interface{}{
+						"text": part.Text,
+					}
+
+					// 如果这是思考内容，添加thought字段
+					if part.Thought {
+						partData["thought"] = true
+					}
+
+					candidateData["content"].(map[string]interface{})["parts"] = append(
+						candidateData["content"].(map[string]interface{})["parts"].([]map[string]interface{}),
+						partData,
+					)
+				}
+			}
+		}
+
+		// 处理完成原因
+		candidateData["finishReason"] = candidate.FinishReason
+
+		nativeResponse["candidates"] = append(
+			nativeResponse["candidates"].([]map[string]interface{}),
+			candidateData,
+		)
+	}
+
+	// 处理使用统计
+	if chunk.UsageMetadata != nil {
+		usageMetadata := map[string]interface{}{
+			"promptTokenCount":     chunk.UsageMetadata.PromptTokenCount,
+			"candidatesTokenCount": chunk.UsageMetadata.CandidatesTokenCount,
+			"totalTokenCount":      chunk.UsageMetadata.TotalTokenCount,
+		}
+
+		// 如果有思考token计数，添加到响应中
+		if chunk.UsageMetadata.ThoughtsTokenCount > 0 {
+			usageMetadata["thoughtsTokenCount"] = chunk.UsageMetadata.ThoughtsTokenCount
+		}
+
+		nativeResponse["usageMetadata"] = usageMetadata
+	}
+
+	// 序列化为JSON
+	jsonData, err := json.Marshal(nativeResponse)
+	if err != nil {
+		return nil, err
+	}
+
+	// 格式化为SSE
+	return []byte(fmt.Sprintf("data: %s\n\n", string(jsonData))), nil
 }

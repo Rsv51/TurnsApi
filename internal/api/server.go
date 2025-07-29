@@ -14,6 +14,7 @@ import (
 	"turnsapi/internal/auth"
 	"turnsapi/internal/keymanager"
 	"turnsapi/internal/logger"
+	"turnsapi/internal/providers"
 	"turnsapi/internal/proxy"
 	"turnsapi/internal/proxykey"
 
@@ -155,6 +156,17 @@ func (s *Server) setupRoutes() {
 		api.POST("/chat/completions", s.handleChatCompletions)
 		// 模型列表端点
 		api.GET("/models", s.handleModels)
+	}
+
+	// Gemini原生API路由组（需要API密钥认证）
+	geminiAPI := s.router.Group("/v1/beta")
+	geminiAPI.Use(s.authManager.APIKeyAuthMiddleware())
+	{
+		// Gemini原生聊天完成端点
+		geminiAPI.POST("/models/:model/generateContent", s.handleGeminiNativeChat)
+		geminiAPI.POST("/models/:model/streamGenerateContent", s.handleGeminiNativeStreamChat)
+		// Gemini模型列表端点
+		geminiAPI.GET("/models", s.handleGeminiNativeModels)
 	}
 
 	// 管理路由组（需要认证）
@@ -823,4 +835,162 @@ func (s *Server) handleLogsPage(c *gin.Context) {
 	c.HTML(http.StatusOK, "logs.html", gin.H{
 		"title": "请求日志 - TurnsAPI",
 	})
+}
+
+// handleGeminiNativeChat 处理Gemini原生聊天完成请求
+func (s *Server) handleGeminiNativeChat(c *gin.Context) {
+	model := c.Param("model")
+
+	// 解析Gemini原生请求格式
+	var nativeReq map[string]interface{}
+	if err := c.ShouldBindJSON(&nativeReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Invalid request format",
+				"code":    "invalid_request",
+			},
+		})
+		return
+	}
+
+	// 转换为标准请求格式
+	standardReq, err := s.convertGeminiNativeToStandard(nativeReq, model)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Failed to convert request: " + err.Error(),
+				"code":    "conversion_error",
+			},
+		})
+		return
+	}
+
+	// 强制使用原生响应格式
+	c.Set("force_native_response", true)
+	c.Set("target_provider", "gemini")
+
+	// 调用标准聊天完成处理
+	s.handleChatCompletionsWithRequest(c, standardReq)
+}
+
+// handleGeminiNativeStreamChat 处理Gemini原生流式聊天完成请求
+func (s *Server) handleGeminiNativeStreamChat(c *gin.Context) {
+	model := c.Param("model")
+
+	// 解析Gemini原生请求格式
+	var nativeReq map[string]interface{}
+	if err := c.ShouldBindJSON(&nativeReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Invalid request format",
+				"code":    "invalid_request",
+			},
+		})
+		return
+	}
+
+	// 转换为标准请求格式
+	standardReq, err := s.convertGeminiNativeToStandard(nativeReq, model)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Failed to convert request: " + err.Error(),
+				"code":    "conversion_error",
+			},
+		})
+		return
+	}
+
+	// 强制启用流式响应和原生格式
+	standardReq.Stream = true
+	c.Set("force_native_response", true)
+	c.Set("target_provider", "gemini")
+
+	// 调用标准聊天完成处理
+	s.handleChatCompletionsWithRequest(c, standardReq)
+}
+
+// handleGeminiNativeModels 处理Gemini原生模型列表请求
+func (s *Server) handleGeminiNativeModels(c *gin.Context) {
+	// 强制使用Gemini提供商
+	c.Set("target_provider", "gemini")
+	c.Set("force_native_response", true)
+
+	// 调用标准模型列表处理
+	s.handleModels(c)
+}
+
+// convertGeminiNativeToStandard 将Gemini原生请求格式转换为标准格式
+func (s *Server) convertGeminiNativeToStandard(nativeReq map[string]interface{}, model string) (*providers.ChatCompletionRequest, error) {
+	standardReq := &providers.ChatCompletionRequest{
+		Model:  model,
+		Stream: false,
+	}
+
+	// 解析contents字段
+	if contents, ok := nativeReq["contents"].([]interface{}); ok {
+		for _, content := range contents {
+			if contentMap, ok := content.(map[string]interface{}); ok {
+				message := providers.ChatMessage{}
+
+				// 解析role
+				if role, ok := contentMap["role"].(string); ok {
+					if role == "user" {
+						message.Role = "user"
+					} else if role == "model" {
+						message.Role = "assistant"
+					} else {
+						message.Role = role
+					}
+				}
+
+				// 解析parts
+				if parts, ok := contentMap["parts"].([]interface{}); ok {
+					var contentText string
+					for _, part := range parts {
+						if partMap, ok := part.(map[string]interface{}); ok {
+							if text, ok := partMap["text"].(string); ok {
+								contentText += text
+							}
+						}
+					}
+					message.Content = contentText
+				}
+
+				standardReq.Messages = append(standardReq.Messages, message)
+			}
+		}
+	}
+
+	// 解析generationConfig
+	if genConfig, ok := nativeReq["generationConfig"].(map[string]interface{}); ok {
+		if temp, ok := genConfig["temperature"].(float64); ok {
+			standardReq.Temperature = &temp
+		}
+		if maxTokens, ok := genConfig["maxOutputTokens"].(float64); ok {
+			maxTokensInt := int(maxTokens)
+			standardReq.MaxTokens = &maxTokensInt
+		}
+		if topP, ok := genConfig["topP"].(float64); ok {
+			standardReq.TopP = &topP
+		}
+		if stopSequences, ok := genConfig["stopSequences"].([]interface{}); ok {
+			for _, stop := range stopSequences {
+				if stopStr, ok := stop.(string); ok {
+					standardReq.Stop = append(standardReq.Stop, stopStr)
+				}
+			}
+		}
+	}
+
+	return standardReq, nil
+}
+
+// handleChatCompletionsWithRequest 使用指定请求处理聊天完成
+func (s *Server) handleChatCompletionsWithRequest(c *gin.Context, req *providers.ChatCompletionRequest) {
+	// 将请求设置到上下文中，这样代理可以直接使用
+	c.Set("chat_request", req)
+
+	// 调用标准聊天完成处理
+	s.handleChatCompletions(c)
 }

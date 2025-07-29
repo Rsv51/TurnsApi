@@ -11,7 +11,7 @@ func TestProviderFactory(t *testing.T) {
 
 	// Test supported types
 	supportedTypes := factory.GetSupportedTypes()
-	expectedTypes := []string{"openai", "gemini", "anthropic", "azure_openai"}
+	expectedTypes := []string{"openai", "openrouter", "gemini", "anthropic", "azure_openai"}
 
 	if len(supportedTypes) != len(expectedTypes) {
 		t.Errorf("Expected %d supported types, got %d", len(expectedTypes), len(supportedTypes))

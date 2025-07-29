@@ -101,7 +101,7 @@ user_groups:
   # OpenRouter (兼容 OpenAI 格式)
   openrouter:
     name: "OpenRouter"
-    provider_type: "openai"
+    provider_type: "openrouter"
     base_url: "https://openrouter.ai/api/v1"
     enabled: true
     timeout: 60s
@@ -182,7 +182,8 @@ database:
 # ============================================
 
 # provider_type 支持的值:
-# - openai: OpenAI API 和兼容服务 (OpenRouter, Azure OpenAI 等)
+# - openai: OpenAI API 和兼容服务 (Azure OpenAI 等)
+# - openrouter: OpenRouter API (兼容 OpenAI 格式)
 # - gemini: Google Gemini API
 # - anthropic: Anthropic Claude API
 # - azure_openai: Azure OpenAI 服务 (实际上也是 openai 类型)

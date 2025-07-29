@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"turnsapi/internal"
@@ -45,6 +46,7 @@ func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *k
 
 	log.Printf("=== 开始创建MultiProviderServer ===")
 	log.Printf("配置的服务器模式: '%s', 日志级别: '%s'", config.Server.Mode, config.Logging.Level)
+	log.Printf("!!! 这是修改后的 NewMultiProviderServer 函数 !!!")
 
 	// 设置Gin模式
 	// 优先使用Server.Mode配置，如果未设置则根据日志级别判断
@@ -133,13 +135,37 @@ func (s *MultiProviderServer) setupMiddleware() {
 
 // setupRoutes 设置路由
 func (s *MultiProviderServer) setupRoutes() {
+	log.Printf("=== 开始设置路由 ===")
 	// API路由（需要API密钥认证）
 	api := s.router.Group("/v1")
 	api.Use(s.authManager.APIKeyAuthMiddleware())
 	{
 		api.POST("/chat/completions", s.handleChatCompletions)
 		api.GET("/models", s.handleModels)
+
+		// 测试路由
+		api.GET("/test", func(c *gin.Context) {
+			c.JSON(200, gin.H{"message": "test endpoint works"})
+		})
 	}
+
+	// Gemini 原生 API 路由 /v1beta
+	v1betaGroup := s.router.Group("/v1beta")
+	{
+		// 根路径信息端点（不需要认证）
+		v1betaGroup.GET("/", s.handleGeminiBetaInfo)
+
+		// 需要认证的端点
+		v1betaAuthenticated := v1betaGroup.Group("/")
+		v1betaAuthenticated.Use(s.geminiAPIKeyAuthMiddleware())
+		{
+			v1betaAuthenticated.GET("/models", s.handleGeminiNativeModels)
+			// 支持Gemini原生格式 /models/model:method 使用通配符匹配（必须放在具体路由之前）
+			v1betaAuthenticated.POST("/models/*path", s.handleGeminiNativeMethodDispatch)
+		}
+	}
+
+
 
 	// 兼容OpenAI API路径
 	s.router.POST("/chat/completions", s.authManager.APIKeyAuthMiddleware(), s.handleChatCompletions)
@@ -360,41 +386,87 @@ func (s *MultiProviderServer) getModelsForGroup(groupID string, group *internal.
 		return models
 	}
 
-	// 如果没有配置特定模型，根据分组ID或提供商类型返回预定义模型
-	log.Printf("分组 %s 没有配置特定模型，使用预定义模型列表", groupID)
+	// 如果没有配置特定模型，动态从提供商端点获取模型列表
+	log.Printf("分组 %s 没有配置特定模型，尝试从提供商端点获取模型列表", groupID)
 
-	// 优先根据分组ID判断，然后根据提供商类型
-	switch groupID {
-	case "openrouter":
-		// OpenRouter分组返回OpenRouter模型
-		models = append(models, s.getOpenRouterModels()...)
-	case "moda":
-		// Moda分组返回OpenAI模型（因为它使用OpenAI格式）
-		models = append(models, s.getOpenAIModels()...)
-	default:
-		// 根据提供商类型返回预定义的模型列表
-		switch group.ProviderType {
-		case "openai":
-			models = append(models, s.getOpenAIModels()...)
-		case "openrouter":
-			models = append(models, s.getOpenRouterModels()...)
-		case "anthropic":
-			models = append(models, s.getAnthropicModels()...)
-		case "gemini":
-			models = append(models, s.getGeminiModels()...)
-		default:
-			// 对于未知类型，返回通用模型
-			models = append(models, map[string]interface{}{
-				"id":       fmt.Sprintf("%s-default", groupID),
-				"object":   "model",
-				"created":  1640995200, // 2022-01-01
-				"owned_by": groupID,
-			})
-		}
+	// 尝试动态获取模型列表
+	dynamicModels := s.getDynamicModelsForGroup(groupID, group)
+	if len(dynamicModels) > 0 {
+		models = append(models, dynamicModels...)
+	} else {
+		// 如果动态获取失败，返回一个通用占位符，表示支持所有模型
+		log.Printf("分组 %s 动态获取模型失败，返回通用占位符", groupID)
+		models = append(models, map[string]interface{}{
+			"id":       "all-models-supported",
+			"object":   "model",
+			"created":  1640995200,
+			"owned_by": s.getProviderOwner(group.ProviderType),
+			"note":     "This provider supports all available models. Please check the provider's documentation for the complete list.",
+		})
 	}
 
 	// 应用模型别名映射
 	models = s.applyModelMappings(models, group)
+	return models
+}
+
+// getDynamicModelsForGroup 动态从提供商端点获取模型列表
+func (s *MultiProviderServer) getDynamicModelsForGroup(groupID string, group *internal.UserGroup) []map[string]interface{} {
+	// 创建提供商配置
+	providerConfig, err := s.proxy.GetProviderRouter().CreateProviderConfig(groupID, group)
+	if err != nil {
+		log.Printf("创建分组 %s 的提供商配置失败: %v", groupID, err)
+		return nil
+	}
+
+	// 获取提供商实例
+	provider, err := s.proxy.GetProviderRouter().GetProviderManager().GetProvider(groupID, providerConfig)
+	if err != nil {
+		log.Printf("获取分组 %s 的提供商实例失败: %v", groupID, err)
+		return nil
+	}
+
+	// 调用提供商的GetModels方法
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	modelsResponse, err := provider.GetModels(ctx)
+	if err != nil {
+		log.Printf("从分组 %s 获取模型列表失败: %v", groupID, err)
+		return nil
+	}
+
+	// 解析响应
+	var models []map[string]interface{}
+
+	// 处理不同的响应格式
+	switch response := modelsResponse.(type) {
+	case map[string]interface{}:
+		// OpenAI格式: {"object": "list", "data": [...]}
+		if data, exists := response["data"]; exists {
+			if modelList, ok := data.([]interface{}); ok {
+				for _, model := range modelList {
+					if modelMap, ok := model.(map[string]interface{}); ok {
+						models = append(models, modelMap)
+					}
+				}
+			}
+		}
+	case []interface{}:
+		// 直接的模型数组
+		for _, model := range response {
+			if modelMap, ok := model.(map[string]interface{}); ok {
+				models = append(models, modelMap)
+			}
+		}
+	case []map[string]interface{}:
+		// 已经是正确格式的模型数组
+		models = response
+	default:
+		log.Printf("分组 %s 返回了未知的模型响应格式: %T", groupID, modelsResponse)
+		return nil
+	}
+
+	log.Printf("从分组 %s 动态获取到 %d 个模型", groupID, len(models))
 	return models
 }
 
@@ -1141,62 +1213,12 @@ func (s *MultiProviderServer) handleValidateKeys(c *gin.Context) {
 	log.Printf("🔍 开始批量验证密钥: 分组=%s, 提供商=%s, 密钥数量=%d, 测试模型=%s",
 		groupID, group.ProviderType, len(req.APIKeys), testModel)
 
-	// 顺序验证每个密钥，避免限流
+	// 使用批量验证模式，提高效率
 	results := make([]map[string]interface{}, len(req.APIKeys))
-	log.Printf("⚙️ 采用顺序验证模式，每个密钥间隔10秒，避免API限流")
+	log.Printf("⚙️ 采用批量验证模式，批次大小=8，无固定延迟，提高验证效率")
 
-	for i, apiKey := range req.APIKeys {
-		if strings.TrimSpace(apiKey) == "" {
-			log.Printf("⚠️ 跳过空密钥 (索引: %d)", i)
-			results[i] = map[string]interface{}{
-				"index":   i,
-				"api_key": apiKey,
-				"valid":   false,
-				"error":   "Empty API key",
-			}
-			continue
-		}
-
-		log.Printf("🎯 开始验证密钥 %d/%d: %s", i+1, len(req.APIKeys), s.maskKey(apiKey))
-
-		// 验证密钥，最多重试3次
-		valid, err := s.validateKeyWithRetry(groupID, apiKey, testModel, group, 3)
-
-		// 更新数据库中的验证状态
-		validationError := ""
-		if err != nil {
-			validationError = err.Error()
-		}
-
-		// 记录验证结果
-		if valid {
-			log.Printf("✅ 密钥验证成功 %d/%d: %s", i+1, len(req.APIKeys), s.maskKey(apiKey))
-		} else {
-			log.Printf("❌ 密钥验证失败 %d/%d: %s - %s", i+1, len(req.APIKeys), s.maskKey(apiKey), validationError)
-		}
-
-		// 异步更新数据库，避免阻塞验证流程
-		go func(gID, apiKey string, isValid bool, errMsg string) {
-			if updateErr := s.configManager.UpdateAPIKeyValidation(gID, apiKey, isValid, errMsg); updateErr != nil {
-				log.Printf("❌ 更新数据库验证状态失败 %s: %v", s.maskKey(apiKey), updateErr)
-			} else {
-				log.Printf("💾 数据库验证状态已更新: %s (有效: %v)", s.maskKey(apiKey), isValid)
-			}
-		}(groupID, apiKey, valid, validationError)
-
-		results[i] = map[string]interface{}{
-			"index":   i,
-			"api_key": apiKey,
-			"valid":   valid,
-			"error":   validationError,
-		}
-
-		// 如果不是最后一个密钥，等待10秒再验证下一个
-		if i < len(req.APIKeys)-1 {
-			log.Printf("⏳ 等待10秒后验证下一个密钥，避免API限流...")
-			time.Sleep(10 * time.Second)
-		}
-	}
+	// 批量验证API密钥
+	s.validateKeysInBatches(groupID, req.APIKeys, testModel, group, results)
 
 	// 所有验证已完成（顺序执行）
 	log.Printf("✅ 所有密钥验证已完成")
@@ -1304,6 +1326,93 @@ func (s *MultiProviderServer) validateKeyWithRetry(groupID, apiKey, testModel st
 	// 所有重试都失败
 	log.Printf("💥 密钥验证最终失败: %s (已尝试 %d 次)", maskedKey, maxRetries)
 	return false, lastErr
+}
+
+// validateKeysInBatches 批量验证API密钥，提高验证效率
+func (s *MultiProviderServer) validateKeysInBatches(groupID string, apiKeys []string, testModel string, group *internal.UserGroup, results []map[string]interface{}) {
+	const batchSize = 8 // 每批处理8个密钥
+
+	// 分批处理API密钥
+	for batchStart := 0; batchStart < len(apiKeys); batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > len(apiKeys) {
+			batchEnd = len(apiKeys)
+		}
+
+		currentBatch := apiKeys[batchStart:batchEnd]
+		log.Printf("🔄 开始处理批次 %d-%d/%d", batchStart+1, batchEnd, len(apiKeys))
+
+		// 并发验证当前批次的密钥
+		s.validateBatchConcurrently(groupID, currentBatch, batchStart, testModel, group, results)
+
+		log.Printf("✅ 批次 %d-%d/%d 验证完成", batchStart+1, batchEnd, len(apiKeys))
+	}
+}
+
+// validateBatchConcurrently 并发验证一个批次的API密钥
+func (s *MultiProviderServer) validateBatchConcurrently(groupID string, batch []string, batchStartIndex int, testModel string, group *internal.UserGroup, results []map[string]interface{}) {
+	var wg sync.WaitGroup
+
+	// 为每个密钥启动一个goroutine进行验证
+	for i, apiKey := range batch {
+		wg.Add(1)
+		go func(index int, key string) {
+			defer wg.Done()
+
+			actualIndex := batchStartIndex + index
+
+			// 检查空密钥
+			if strings.TrimSpace(key) == "" {
+				log.Printf("⚠️ 跳过空密钥 (索引: %d)", actualIndex)
+				results[actualIndex] = map[string]interface{}{
+					"index":   actualIndex,
+					"api_key": key,
+					"valid":   false,
+					"error":   "Empty API key",
+				}
+				return
+			}
+
+			log.Printf("🎯 开始验证密钥 %d/%d: %s", actualIndex+1, len(results), s.maskKey(key))
+
+			// 验证密钥，最多重试3次
+			valid, err := s.validateKeyWithRetry(groupID, key, testModel, group, 3)
+
+			// 更新数据库中的验证状态
+			validationError := ""
+			if err != nil {
+				validationError = err.Error()
+			}
+
+			// 记录验证结果
+			if valid {
+				log.Printf("✅ 密钥验证成功 %d/%d: %s", actualIndex+1, len(results), s.maskKey(key))
+			} else {
+				log.Printf("❌ 密钥验证失败 %d/%d: %s - %s", actualIndex+1, len(results), s.maskKey(key), validationError)
+			}
+
+			// 异步更新数据库，避免阻塞验证流程
+			if groupID != "temp" { // 只有非临时分组才更新数据库
+				go func(gID, apiKey string, isValid bool, errMsg string) {
+					if updateErr := s.configManager.UpdateAPIKeyValidation(gID, apiKey, isValid, errMsg); updateErr != nil {
+						log.Printf("❌ 更新数据库验证状态失败 %s: %v", s.maskKey(apiKey), updateErr)
+					} else {
+						log.Printf("💾 数据库验证状态已更新: %s (有效: %v)", s.maskKey(apiKey), isValid)
+					}
+				}(groupID, key, valid, validationError)
+			}
+
+			results[actualIndex] = map[string]interface{}{
+				"index":   actualIndex,
+				"api_key": key,
+				"valid":   valid,
+				"error":   validationError,
+			}
+		}(i, apiKey)
+	}
+
+	// 等待当前批次的所有验证完成
+	wg.Wait()
 }
 
 // maskKey 遮蔽API密钥的敏感部分
@@ -2495,52 +2604,12 @@ func (s *MultiProviderServer) handleValidateKeysWithoutGroup(c *gin.Context) {
 	log.Printf("🔍 开始临时分组密钥验证: 名称=%s, 提供商=%s, 密钥数量=%d, 测试模型=%s",
 		req.Name, req.ProviderType, len(req.APIKeys), testModel)
 
-	// 顺序验证密钥，避免限流
+	// 使用批量验证模式，提高效率
 	results := make([]map[string]interface{}, len(req.APIKeys))
-	log.Printf("⚙️ 采用顺序验证模式，每个密钥间隔10秒，避免API限流")
+	log.Printf("⚙️ 采用批量验证模式，批次大小=8，无固定延迟，提高验证效率")
 
-	for i, apiKey := range req.APIKeys {
-		if strings.TrimSpace(apiKey) == "" {
-			log.Printf("⚠️ 跳过空密钥 (索引: %d)", i)
-			results[i] = map[string]interface{}{
-				"index":   i,
-				"api_key": apiKey,
-				"valid":   false,
-				"error":   "Empty API key",
-			}
-			continue
-		}
-
-		log.Printf("🎯 开始验证临时分组密钥 %d/%d: %s", i+1, len(req.APIKeys), s.maskKey(apiKey))
-
-		// 验证密钥，最多重试3次
-		valid, err := s.validateKeyWithRetry("temp", apiKey, testModel, tempGroup, 3)
-
-		validationError := ""
-		if err != nil {
-			validationError = err.Error()
-		}
-
-		// 记录验证结果
-		if valid {
-			log.Printf("✅ 临时分组密钥验证成功 %d/%d: %s", i+1, len(req.APIKeys), s.maskKey(apiKey))
-		} else {
-			log.Printf("❌ 临时分组密钥验证失败 %d/%d: %s - %s", i+1, len(req.APIKeys), s.maskKey(apiKey), validationError)
-		}
-
-		results[i] = map[string]interface{}{
-			"index":   i,
-			"api_key": apiKey,
-			"valid":   valid,
-			"error":   validationError,
-		}
-
-		// 如果不是最后一个密钥，等待10秒再验证下一个
-		if i < len(req.APIKeys)-1 {
-			log.Printf("⏳ 等待10秒后验证下一个密钥，避免API限流...")
-			time.Sleep(10 * time.Second)
-		}
-	}
+	// 批量验证API密钥
+	s.validateKeysInBatches("temp", req.APIKeys, testModel, tempGroup, results)
 
 	// 所有验证已完成（顺序执行）
 	log.Printf("✅ 所有临时分组密钥验证已完成")
@@ -2599,4 +2668,418 @@ func (s *MultiProviderServer) handleGetKeyValidationStatus(c *gin.Context) {
 		"group_id":          groupID,
 		"validation_status": validationStatus,
 	})
+}
+
+// handleGeminiNativeChat 处理Gemini原生聊天完成请求
+func (s *MultiProviderServer) handleGeminiNativeChat(c *gin.Context) {
+	// 尝试从上下文获取模型名称（通过分发器设置）
+	model, exists := c.Get("model")
+	var modelStr string
+	if exists {
+		modelStr, _ = model.(string)
+	}
+
+	// 如果上下文中没有，尝试从URL参数获取
+	if modelStr == "" {
+		modelStr = c.Param("model")
+	}
+
+	// 解析Gemini原生请求格式
+	var nativeReq map[string]interface{}
+	if err := c.ShouldBindJSON(&nativeReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Invalid request format: " + err.Error(),
+				"code":    "invalid_request",
+			},
+		})
+		return
+	}
+
+	// 转换为标准请求格式
+	standardReq, err := s.convertGeminiNativeToStandard(nativeReq, modelStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Failed to convert request: " + err.Error(),
+				"code":    "conversion_error",
+			},
+		})
+		return
+	}
+
+	// 强制使用原生响应格式
+	c.Set("force_native_response", true)
+	c.Set("target_provider", "gemini")
+
+	// 调用标准聊天完成处理
+	s.handleChatCompletionsWithRequest(c, standardReq)
+}
+
+// handleGeminiNativeStreamChat 处理Gemini原生流式聊天完成请求
+func (s *MultiProviderServer) handleGeminiNativeStreamChat(c *gin.Context) {
+	// 尝试从上下文获取模型名称（通过分发器设置）
+	model, exists := c.Get("model")
+	var modelStr string
+	if exists {
+		modelStr, _ = model.(string)
+	}
+
+	// 如果上下文中没有，尝试从URL参数获取
+	if modelStr == "" {
+		modelStr = c.Param("model")
+	}
+
+	// 解析Gemini原生请求格式
+	var nativeReq map[string]interface{}
+	if err := c.ShouldBindJSON(&nativeReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Invalid request format",
+				"code":    "invalid_request",
+			},
+		})
+		return
+	}
+
+	// 转换为标准请求格式
+	standardReq, err := s.convertGeminiNativeToStandard(nativeReq, modelStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": "Failed to convert request: " + err.Error(),
+				"code":    "conversion_error",
+			},
+		})
+		return
+	}
+
+	// 强制启用流式响应和原生格式
+	standardReq.Stream = true
+	c.Set("force_native_response", true)
+	c.Set("target_provider", "gemini")
+
+	// 调用标准聊天完成处理
+	s.handleChatCompletionsWithRequest(c, standardReq)
+}
+
+// handleGeminiNativeModels 处理Gemini原生模型列表请求
+func (s *MultiProviderServer) handleGeminiNativeModels(c *gin.Context) {
+	// 获取密钥信息
+	keyInfo, exists := c.Get("key_info")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": gin.H{
+				"message": "Authentication required",
+				"code":    "unauthenticated",
+			},
+		})
+		return
+	}
+
+	keyInfoStruct, ok := keyInfo.(*logger.ProxyKey)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"message": "Invalid key information",
+				"code":    "internal_error",
+			},
+		})
+		return
+	}
+
+	// 获取可访问的分组
+	allowedGroups := keyInfoStruct.AllowedGroups
+	if len(allowedGroups) == 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{
+				"message": "No accessible groups",
+				"code":    "permission_denied",
+			},
+		})
+		return
+	}
+
+	// 收集所有Gemini模型
+	var geminiModels []map[string]interface{}
+
+	for _, groupID := range allowedGroups {
+		group, exists := s.configManager.GetConfig().UserGroups[groupID]
+		if !exists || !group.Enabled {
+			continue
+		}
+
+		// 只处理Gemini提供商
+		if group.ProviderType != "gemini" {
+			continue
+		}
+
+		// 获取分组的模型列表
+		for _, model := range group.Models {
+			geminiModel := map[string]interface{}{
+				"name":                   fmt.Sprintf("models/%s", model),
+				"baseModelId":           model,
+				"version":               "001",
+				"displayName":           model,
+				"description":           fmt.Sprintf("Google %s model", model),
+				"inputTokenLimit":       1048576, // 1M tokens
+				"outputTokenLimit":      8192,
+				"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent"},
+				"temperature":           0.9,
+				"maxTemperature":        2.0,
+				"topP":                  1.0,
+				"topK":                  40,
+			}
+			geminiModels = append(geminiModels, geminiModel)
+		}
+	}
+
+	// 返回Gemini原生格式
+	c.JSON(http.StatusOK, gin.H{
+		"models": geminiModels,
+	})
+}
+
+// convertGeminiNativeToStandard 将Gemini原生请求格式转换为标准格式
+func (s *MultiProviderServer) convertGeminiNativeToStandard(nativeReq map[string]interface{}, model string) (*providers.ChatCompletionRequest, error) {
+	standardReq := &providers.ChatCompletionRequest{
+		Model:  model,
+		Stream: false,
+	}
+
+	// 解析contents字段
+	if contents, ok := nativeReq["contents"].([]interface{}); ok {
+		for _, content := range contents {
+			if contentMap, ok := content.(map[string]interface{}); ok {
+				message := providers.ChatMessage{}
+
+				// 解析role
+				if role, ok := contentMap["role"].(string); ok {
+					if role == "user" {
+						message.Role = "user"
+					} else if role == "model" {
+						message.Role = "assistant"
+					} else {
+						message.Role = role
+					}
+				}
+
+				// 解析parts
+				if parts, ok := contentMap["parts"].([]interface{}); ok {
+					var contentText string
+					for _, part := range parts {
+						if partMap, ok := part.(map[string]interface{}); ok {
+							if text, ok := partMap["text"].(string); ok {
+								contentText += text
+							}
+						}
+					}
+					message.Content = contentText
+				}
+
+				standardReq.Messages = append(standardReq.Messages, message)
+			}
+		}
+	}
+
+	// 解析generationConfig
+	if genConfig, ok := nativeReq["generationConfig"].(map[string]interface{}); ok {
+		if temp, ok := genConfig["temperature"].(float64); ok {
+			standardReq.Temperature = &temp
+		}
+		if maxTokens, ok := genConfig["maxOutputTokens"].(float64); ok {
+			maxTokensInt := int(maxTokens)
+			standardReq.MaxTokens = &maxTokensInt
+		}
+		if topP, ok := genConfig["topP"].(float64); ok {
+			standardReq.TopP = &topP
+		}
+		if stopSequences, ok := genConfig["stopSequences"].([]interface{}); ok {
+			for _, stop := range stopSequences {
+				if stopStr, ok := stop.(string); ok {
+					standardReq.Stop = append(standardReq.Stop, stopStr)
+				}
+			}
+		}
+	}
+
+	return standardReq, nil
+}
+
+// handleChatCompletionsWithRequest 使用指定请求处理聊天完成
+func (s *MultiProviderServer) handleChatCompletionsWithRequest(c *gin.Context, req *providers.ChatCompletionRequest) {
+	// 将请求设置到上下文中，这样代理可以直接使用
+	c.Set("chat_request", req)
+
+	// 调用标准聊天完成处理
+	s.handleChatCompletions(c)
+}
+
+// handleGeminiBetaInfo 处理Gemini Beta API信息请求
+func (s *MultiProviderServer) handleGeminiBetaInfo(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"name":        "Gemini API (Beta)",
+		"version":     "v1beta",
+		"description": "Google Gemini native API endpoints",
+		"endpoints": map[string]interface{}{
+			"models": map[string]interface{}{
+				"GET /v1/beta/models": "List available Gemini models",
+			},
+			"generateContent": map[string]interface{}{
+				"POST /v1/beta/models/{model}/generateContent": "Generate content using Gemini native format",
+			},
+			"streamGenerateContent": map[string]interface{}{
+				"POST /v1/beta/models/{model}/streamGenerateContent": "Generate content with streaming using Gemini native format",
+			},
+		},
+		"documentation": "https://ai.google.dev/api/rest",
+		"supported_models": []string{
+			"gemini-2.5-pro",
+			"gemini-2.5-flash",
+			"gemini-1.5-pro",
+			"gemini-1.5-flash",
+		},
+		"note": "This endpoint requires a valid API key and a Gemini provider group with use_native_response enabled",
+	})
+}
+
+// handleGeminiNativeMethodDispatch 处理Gemini原生方法分发
+func (s *MultiProviderServer) handleGeminiNativeMethodDispatch(c *gin.Context) {
+	path := c.Param("path")
+
+	// 解析路径格式: /model:method 或 /model/method
+	var model, method string
+
+	// 移除开头的斜杠
+	if strings.HasPrefix(path, "/") {
+		path = path[1:]
+	}
+
+	// 检查是否是冒号格式 (model:method)
+	if strings.Contains(path, ":") {
+		parts := strings.SplitN(path, ":", 2)
+		if len(parts) == 2 {
+			model = parts[0]
+			method = parts[1]
+		}
+	} else {
+		// 检查是否是斜杠格式 (model/method)
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) == 2 {
+			model = parts[0]
+			method = parts[1]
+		}
+	}
+
+	if model == "" || method == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": fmt.Sprintf("Invalid path format. Expected /models/model:method or /models/model/method. Got: %s", path),
+				"code":    "invalid_path",
+			},
+		})
+		return
+	}
+
+	// 设置模型参数到上下文中
+	c.Set("model", model)
+
+	// 根据方法分发到相应的处理函数
+	switch method {
+	case "generateContent":
+		s.handleGeminiNativeChat(c)
+	case "streamGenerateContent":
+		s.handleGeminiNativeStreamChat(c)
+	default:
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"message": fmt.Sprintf("Unknown method: %s", method),
+				"code":    "method_not_found",
+			},
+		})
+	}
+}
+
+// geminiAPIKeyAuthMiddleware Gemini API密钥认证中间件，支持x-goog-api-key头
+func (s *MultiProviderServer) geminiAPIKeyAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var apiKey string
+
+		// 首先尝试从x-goog-api-key头获取（Gemini原生API方式）
+		if googAPIKey := c.GetHeader("x-goog-api-key"); googAPIKey != "" {
+			apiKey = googAPIKey
+		} else {
+			// 然后尝试从Authorization头获取（标准Bearer方式）
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error": gin.H{
+						"message": "Missing API key. Use 'x-goog-api-key' header or 'Authorization: Bearer <key>' header",
+						"type":    "authentication_error",
+						"code":    "missing_api_key",
+					},
+				})
+				c.Abort()
+				return
+			}
+
+			// 检查Bearer格式
+			const bearerPrefix = "Bearer "
+			if !strings.HasPrefix(authHeader, bearerPrefix) {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error": gin.H{
+						"message": "Invalid Authorization header format. Use 'Authorization: Bearer <key>' or 'x-goog-api-key: <key>'",
+						"type":    "authentication_error",
+						"code":    "invalid_auth_format",
+					},
+				})
+				c.Abort()
+				return
+			}
+
+			apiKey = strings.TrimPrefix(authHeader, bearerPrefix)
+		}
+
+		if apiKey == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"message": "Empty API key",
+					"type":    "authentication_error",
+					"code":    "empty_api_key",
+				},
+			})
+			c.Abort()
+			return
+		}
+
+		// 验证API密钥
+		if s.authManager == nil || s.proxyKeyManager == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{
+					"message": "Authentication system not configured",
+					"type":    "internal_error",
+					"code":    "auth_system_missing",
+				},
+			})
+			c.Abort()
+			return
+		}
+
+		keyInfo, valid := s.proxyKeyManager.ValidateKey(apiKey)
+		if !valid {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": gin.H{
+					"message": "Invalid API key",
+					"type":    "authentication_error",
+					"code":    "invalid_api_key",
+				},
+			})
+			c.Abort()
+			return
+		}
+
+		// 将密钥信息存储到上下文中
+		c.Set("key_info", keyInfo)
+		c.Next()
+	}
 }

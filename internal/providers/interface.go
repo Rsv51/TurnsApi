@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -126,28 +127,31 @@ type ProviderConfig struct {
 type Provider interface {
 	// GetProviderType 获取提供商类型
 	GetProviderType() string
-	
+
 	// ChatCompletion 发送聊天完成请求
 	ChatCompletion(ctx context.Context, req *ChatCompletionRequest) (*ChatCompletionResponse, error)
-	
+
 	// ChatCompletionStream 发送流式聊天完成请求
 	ChatCompletionStream(ctx context.Context, req *ChatCompletionRequest) (<-chan StreamResponse, error)
-	
+
+	// ChatCompletionStreamNative 发送原生格式流式聊天完成请求
+	ChatCompletionStreamNative(ctx context.Context, req *ChatCompletionRequest) (<-chan StreamResponse, error)
+
 	// GetModels 获取可用模型列表
 	GetModels(ctx context.Context) (interface{}, error)
-	
+
 	// HealthCheck 健康检查
 	HealthCheck(ctx context.Context) error
-	
+
 	// TransformRequest 将标准请求转换为提供商特定格式
 	TransformRequest(req *ChatCompletionRequest) (interface{}, error)
-	
+
 	// TransformResponse 将提供商响应转换为标准格式
 	TransformResponse(resp interface{}) (*ChatCompletionResponse, error)
-	
+
 	// CreateHTTPRequest 创建HTTP请求
 	CreateHTTPRequest(ctx context.Context, endpoint string, body interface{}) (*http.Request, error)
-	
+
 	// ParseHTTPResponse 解析HTTP响应
 	ParseHTTPResponse(resp *http.Response) (interface{}, error)
 }
@@ -205,4 +209,17 @@ func (bp *BaseProvider) CreateHTTPRequest(ctx context.Context, endpoint string, 
 func (bp *BaseProvider) HealthCheck(ctx context.Context) error {
 	// 默认实现，具体提供商可以重写
 	return nil
+}
+
+// ChatCompletionStreamNative 默认原生流式响应实现
+func (bp *BaseProvider) ChatCompletionStreamNative(ctx context.Context, req *ChatCompletionRequest) (<-chan StreamResponse, error) {
+	// 默认实现：调用标准流式响应
+	// 具体提供商可以重写此方法来提供真正的原生响应
+	return bp.ChatCompletionStream(ctx, req)
+}
+
+// ChatCompletionStream 默认流式响应实现
+func (bp *BaseProvider) ChatCompletionStream(ctx context.Context, req *ChatCompletionRequest) (<-chan StreamResponse, error) {
+	// 默认实现，具体提供商需要重写
+	return nil, fmt.Errorf("streaming not implemented for this provider")
 }

@@ -11,36 +11,40 @@ import (
 // 转换函数：从internal.UserGroup转换为database.UserGroup
 func toDBUserGroup(group *UserGroup) *database.UserGroup {
 	return &database.UserGroup{
-		Name:             group.Name,
-		ProviderType:     group.ProviderType,
-		BaseURL:          group.BaseURL,
-		Enabled:          group.Enabled,
-		Timeout:          group.Timeout,
-		MaxRetries:       group.MaxRetries,
-		RotationStrategy: group.RotationStrategy,
-		APIKeys:          group.APIKeys,
-		Models:           group.Models,
-		Headers:          group.Headers,
-		RequestParams:    group.RequestParams,
-		ModelMappings:    group.ModelMappings,
+		Name:              group.Name,
+		ProviderType:      group.ProviderType,
+		BaseURL:           group.BaseURL,
+		Enabled:           group.Enabled,
+		Timeout:           group.Timeout,
+		MaxRetries:        group.MaxRetries,
+		RotationStrategy:  group.RotationStrategy,
+		APIKeys:           group.APIKeys,
+		Models:            group.Models,
+		Headers:           group.Headers,
+		RequestParams:     group.RequestParams,
+		ModelMappings:     group.ModelMappings,
+		UseNativeResponse: group.UseNativeResponse,
+		RPMLimit:          group.RPMLimit,
 	}
 }
 
 // 转换函数：从database.UserGroup转换为internal.UserGroup
 func fromDBUserGroup(dbGroup *database.UserGroup) *UserGroup {
 	return &UserGroup{
-		Name:             dbGroup.Name,
-		ProviderType:     dbGroup.ProviderType,
-		BaseURL:          dbGroup.BaseURL,
-		Enabled:          dbGroup.Enabled,
-		Timeout:          dbGroup.Timeout,
-		MaxRetries:       dbGroup.MaxRetries,
-		RotationStrategy: dbGroup.RotationStrategy,
-		APIKeys:          dbGroup.APIKeys,
-		Models:           dbGroup.Models,
-		Headers:          dbGroup.Headers,
-		RequestParams:    dbGroup.RequestParams,
-		ModelMappings:    dbGroup.ModelMappings,
+		Name:              dbGroup.Name,
+		ProviderType:      dbGroup.ProviderType,
+		BaseURL:           dbGroup.BaseURL,
+		Enabled:           dbGroup.Enabled,
+		Timeout:           dbGroup.Timeout,
+		MaxRetries:        dbGroup.MaxRetries,
+		RotationStrategy:  dbGroup.RotationStrategy,
+		APIKeys:           dbGroup.APIKeys,
+		Models:            dbGroup.Models,
+		Headers:           dbGroup.Headers,
+		RequestParams:     dbGroup.RequestParams,
+		ModelMappings:     dbGroup.ModelMappings,
+		UseNativeResponse: dbGroup.UseNativeResponse,
+		RPMLimit:          dbGroup.RPMLimit,
 	}
 }
 

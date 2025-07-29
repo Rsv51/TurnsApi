@@ -208,7 +208,7 @@ func validateConfiguration(config *internal.Config) error {
 		}
 		
 		// 验证提供商类型
-		supportedTypes := []string{"openai", "gemini", "anthropic", "azure_openai"}
+		supportedTypes := []string{"openai", "gemini", "anthropic", "azure_openai", "openrouter"}
 		supported := false
 		for _, supportedType := range supportedTypes {
 			if group.ProviderType == supportedType {
@@ -238,6 +238,7 @@ func showUsage() {
 	log.Println("")
 	log.Println("支持的提供商类型:")
 	log.Println("  - openai: OpenAI API 和兼容服务")
+	log.Println("  - openrouter: OpenRouter API (兼容 OpenAI 格式)")
 	log.Println("  - gemini: Google Gemini API")
 	log.Println("  - anthropic: Anthropic Claude API")
 	log.Println("  - azure_openai: Azure OpenAI 服务")

@@ -79,22 +79,128 @@ func (mp *MultiProviderProxy) GetRPMStats() map[string]map[string]int {
 	return mp.rpmLimiter.GetAllStats()
 }
 
+// shouldUseNativeResponse 检查是否应该使用原生响应格式
+func (p *MultiProviderProxy) shouldUseNativeResponse(groupID string, c *gin.Context) bool {
+	// 检查是否强制使用原生响应
+	if forceNative, exists := c.Get("force_native_response"); exists {
+		if force, ok := forceNative.(bool); ok && force {
+			return true
+		}
+	}
+
+	// 检查分组配置
+	if p.config.UserGroups == nil {
+		return false
+	}
+
+	group, exists := p.config.UserGroups[groupID]
+	if !exists {
+		return false
+	}
+
+	return group.UseNativeResponse
+}
+
+// getNativeResponse 获取提供商的原生响应格式
+func (p *MultiProviderProxy) getNativeResponse(provider providers.Provider, standardResponse *providers.ChatCompletionResponse) (interface{}, error) {
+	// 根据提供商类型返回相应的原生格式
+	switch provider.GetProviderType() {
+	case "gemini":
+		return p.convertToGeminiNativeResponse(standardResponse)
+	case "anthropic":
+		return p.convertToAnthropicNativeResponse(standardResponse)
+	case "openai", "azure_openai":
+		// OpenAI格式本身就是标准格式，直接返回
+		return standardResponse, nil
+	default:
+		// 对于未知提供商，返回标准格式
+		return standardResponse, nil
+	}
+}
+
+// convertToGeminiNativeResponse 转换为Gemini原生响应格式
+func (p *MultiProviderProxy) convertToGeminiNativeResponse(response *providers.ChatCompletionResponse) (interface{}, error) {
+	// 构造Gemini原生响应格式
+	nativeResponse := map[string]interface{}{
+		"candidates": []map[string]interface{}{
+			{
+				"content": map[string]interface{}{
+					"parts": []map[string]interface{}{
+						{
+							"text": response.Choices[0].Message.Content,
+						},
+					},
+					"role": "model",
+				},
+				"finishReason": response.Choices[0].FinishReason,
+				"index":       response.Choices[0].Index,
+			},
+		},
+		"usageMetadata": map[string]interface{}{
+			"promptTokenCount":     response.Usage.PromptTokens,
+			"candidatesTokenCount": response.Usage.CompletionTokens,
+			"totalTokenCount":      response.Usage.TotalTokens,
+		},
+	}
+
+	return nativeResponse, nil
+}
+
+// convertToAnthropicNativeResponse 转换为Anthropic原生响应格式
+func (p *MultiProviderProxy) convertToAnthropicNativeResponse(response *providers.ChatCompletionResponse) (interface{}, error) {
+	// 构造Anthropic原生响应格式
+	nativeResponse := map[string]interface{}{
+		"id":      response.ID,
+		"type":    "message",
+		"role":    "assistant",
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": response.Choices[0].Message.Content,
+			},
+		},
+		"model":       response.Model,
+		"stop_reason": response.Choices[0].FinishReason,
+		"usage": map[string]interface{}{
+			"input_tokens":  response.Usage.PromptTokens,
+			"output_tokens": response.Usage.CompletionTokens,
+		},
+	}
+
+	return nativeResponse, nil
+}
+
 // HandleChatCompletion 处理聊天完成请求
 func (p *MultiProviderProxy) HandleChatCompletion(c *gin.Context) {
 	startTime := time.Now()
 
-	// 解析请求
+	// 解析请求 - 优先从上下文获取预设请求
 	var req providers.ChatCompletionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Printf("Failed to parse request: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": gin.H{
-				"message": "Invalid request format",
-				"type":    "invalid_request_error",
-				"code":    "invalid_json",
-			},
-		})
-		return
+	if presetReq, exists := c.Get("chat_request"); exists {
+		if chatReq, ok := presetReq.(*providers.ChatCompletionRequest); ok {
+			req = *chatReq
+		} else {
+			log.Printf("Invalid preset request type")
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{
+					"message": "Internal server error",
+					"type":    "internal_error",
+				},
+			})
+			return
+		}
+	} else {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			log.Printf("Failed to parse request: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{
+					"message": "Invalid request format",
+					"type":    "invalid_request_error",
+					"code":    "invalid_json",
+				},
+			})
+			return
+		}
 	}
 
 	// 检查必需字段
@@ -137,6 +243,13 @@ func (p *MultiProviderProxy) HandleChatCompletion(c *gin.Context) {
 	// 检查是否有显式指定的提供商分组
 	if providerGroup := c.GetHeader("X-Provider-Group"); providerGroup != "" {
 		routeReq.ProviderGroup = providerGroup
+	}
+
+	// 检查是否强制指定提供商类型
+	if targetProvider, exists := c.Get("target_provider"); exists {
+		if providerType, ok := targetProvider.(string); ok {
+			routeReq.ForceProviderType = providerType
+		}
 	}
 
 	// 使用智能路由重试机制
@@ -291,17 +404,30 @@ func (p *MultiProviderProxy) handleNonStreamingRequest(
 	// 报告成功
 	p.keyManager.ReportSuccess(routeResult.GroupID, apiKey)
 
+	// 检查是否需要返回原生响应格式
+	var finalResponse interface{} = response
+	if p.shouldUseNativeResponse(routeResult.GroupID, c) {
+		// 获取原生响应
+		nativeResponse, err := p.getNativeResponse(routeResult.Provider, response)
+		if err != nil {
+			log.Printf("Failed to get native response: %v", err)
+			// 如果获取原生响应失败，仍然返回标准格式
+		} else {
+			finalResponse = nativeResponse
+		}
+	}
+
 	// 记录成功日志
 	if p.requestLogger != nil {
 		proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
 		reqBody, _ := json.Marshal(req)
-		respBody, _ := json.Marshal(response)
+		respBody, _ := json.Marshal(finalResponse)
 		clientIP := logger.GetClientIP(c)
 		p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, routeResult.GroupID, apiKey, req.Model, string(reqBody), string(respBody), clientIP, 200, false, time.Since(startTime), nil)
 	}
 
 	// 返回响应
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusOK, finalResponse)
 	return true
 }
 
@@ -341,8 +467,17 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
 
-	// 获取流式响应
-	streamChan, err := routeResult.Provider.ChatCompletionStream(ctx, req)
+	// 根据配置选择流式响应类型
+	var streamChan <-chan providers.StreamResponse
+	var err error
+
+	if p.shouldUseNativeResponse(routeResult.GroupID, c) {
+		// 使用原生格式流式响应
+		streamChan, err = routeResult.Provider.ChatCompletionStreamNative(ctx, req)
+	} else {
+		// 使用标准格式流式响应
+		streamChan, err = routeResult.Provider.ChatCompletionStream(ctx, req)
+	}
 
 	// 恢复原始模型名称用于日志记录
 	req.Model = originalModel

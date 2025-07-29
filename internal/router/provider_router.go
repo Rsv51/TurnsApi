@@ -35,9 +35,10 @@ func NewProviderRouter(config *internal.Config, providerManager *providers.Provi
 
 // RouteRequest 路由请求结构
 type RouteRequest struct {
-	Model         string   `json:"model"`
-	ProviderGroup string   `json:"provider_group,omitempty"` // 可选的显式提供商分组
-	AllowedGroups []string `json:"allowed_groups,omitempty"` // 代理密钥允许访问的分组
+	Model             string   `json:"model"`
+	ProviderGroup     string   `json:"provider_group,omitempty"`     // 可选的显式提供商分组
+	AllowedGroups     []string `json:"allowed_groups,omitempty"`     // 代理密钥允许访问的分组
+	ForceProviderType string   `json:"force_provider_type,omitempty"` // 强制指定提供商类型
 }
 
 // RouteResult 路由结果
@@ -385,6 +386,11 @@ func (pr *ProviderRouter) sortGroupsByFailureCount(modelName string, groups []st
 
 // RouteWithRetry 智能路由，支持失败重试
 func (pr *ProviderRouter) RouteWithRetry(req *RouteRequest) (*RouteResult, error) {
+	// 如果强制指定了提供商类型，优先处理
+	if req.ForceProviderType != "" {
+		return pr.routeByForceProviderType(req)
+	}
+
 	// 如果显式指定了提供商分组，直接使用
 	if req.ProviderGroup != "" {
 		group, exists := pr.config.UserGroups[req.ProviderGroup]
@@ -673,4 +679,55 @@ func (pr *ProviderRouter) GetProviderTypeForGroup(groupID string) (string, error
 // UpdateProviderConfig 更新提供商配置中的API密钥
 func (pr *ProviderRouter) UpdateProviderConfig(config *providers.ProviderConfig, apiKey string) {
 	config.APIKey = apiKey
+}
+
+// CreateProviderConfig 创建提供商配置（公开方法）
+func (pr *ProviderRouter) CreateProviderConfig(groupID string, group *internal.UserGroup) (*providers.ProviderConfig, error) {
+	return pr.createProviderConfig(groupID, group)
+}
+
+// GetProviderManager 获取提供商管理器（公开方法）
+func (pr *ProviderRouter) GetProviderManager() *providers.ProviderManager {
+	return pr.providerManager
+}
+
+// routeByForceProviderType 根据强制指定的提供商类型路由
+func (pr *ProviderRouter) routeByForceProviderType(req *RouteRequest) (*RouteResult, error) {
+	// 获取有权限访问的分组列表
+	accessibleGroups := pr.getAccessibleGroups(req.AllowedGroups)
+	if len(accessibleGroups) == 0 {
+		return nil, fmt.Errorf("no accessible groups for current permissions")
+	}
+
+	// 查找匹配指定提供商类型的分组
+	for _, groupID := range accessibleGroups {
+		group := pr.config.UserGroups[groupID]
+		if !group.Enabled {
+			continue
+		}
+
+		// 检查提供商类型是否匹配
+		if group.ProviderType == req.ForceProviderType {
+			// 创建提供商配置
+			providerConfig, err := pr.createProviderConfig(groupID, group)
+			if err != nil {
+				continue
+			}
+
+			// 获取提供商实例
+			provider, err := pr.providerManager.GetProvider(groupID, providerConfig)
+			if err != nil {
+				continue
+			}
+
+			return &RouteResult{
+				GroupID:        groupID,
+				Group:          group,
+				Provider:       provider,
+				ProviderConfig: providerConfig,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no suitable provider group found for forced provider type '%s' with current permissions", req.ForceProviderType)
 }
