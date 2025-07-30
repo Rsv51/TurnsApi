@@ -165,8 +165,6 @@ func (s *MultiProviderServer) setupRoutes() {
 		}
 	}
 
-
-
 	// 兼容OpenAI API路径
 	s.router.POST("/chat/completions", s.authManager.APIKeyAuthMiddleware(), s.handleChatCompletions)
 	s.router.GET("/models", s.authManager.APIKeyAuthMiddleware(), s.handleModels)
@@ -210,6 +208,7 @@ func (s *MultiProviderServer) setupRoutes() {
 		// 代理密钥管理
 		admin.GET("/proxy-keys", s.handleProxyKeys)
 		admin.POST("/proxy-keys", s.handleGenerateProxyKey)
+		admin.PUT("/proxy-keys/:id", s.handleUpdateProxyKey)
 		admin.DELETE("/proxy-keys/:id", s.handleDeleteProxyKey)
 
 		// 分组管理
@@ -2116,6 +2115,49 @@ func (s *MultiProviderServer) handleGenerateProxyKey(c *gin.Context) {
 	})
 }
 
+// handleUpdateProxyKey 处理更新代理密钥
+func (s *MultiProviderServer) handleUpdateProxyKey(c *gin.Context) {
+	keyID := c.Param("id")
+
+	var req struct {
+		Name          string   `json:"name" binding:"required"`
+		Description   string   `json:"description"`
+		IsActive      *bool    `json:"is_active"`
+		AllowedGroups []string `json:"allowedGroups"` // 保持与生成时一致的字段名
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request format",
+		})
+		return
+	}
+
+	// 如果没有提供 IsActive，默认为 true
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+
+	// 如果没有提供 AllowedGroups，默认为空数组
+	allowedGroups := req.AllowedGroups
+	if allowedGroups == nil {
+		allowedGroups = []string{}
+	}
+
+	if err := s.proxyKeyManager.UpdateKey(keyID, req.Name, req.Description, isActive, allowedGroups); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "代理密钥更新成功",
+	})
+}
+
 // handleDeleteProxyKey 处理删除代理密钥
 func (s *MultiProviderServer) handleDeleteProxyKey(c *gin.Context) {
 	id := c.Param("id")
@@ -2817,18 +2859,18 @@ func (s *MultiProviderServer) handleGeminiNativeModels(c *gin.Context) {
 		// 获取分组的模型列表
 		for _, model := range group.Models {
 			geminiModel := map[string]interface{}{
-				"name":                   fmt.Sprintf("models/%s", model),
-				"baseModelId":           model,
-				"version":               "001",
-				"displayName":           model,
-				"description":           fmt.Sprintf("Google %s model", model),
-				"inputTokenLimit":       1048576, // 1M tokens
-				"outputTokenLimit":      8192,
+				"name":                       fmt.Sprintf("models/%s", model),
+				"baseModelId":                model,
+				"version":                    "001",
+				"displayName":                model,
+				"description":                fmt.Sprintf("Google %s model", model),
+				"inputTokenLimit":            1048576, // 1M tokens
+				"outputTokenLimit":           8192,
 				"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent"},
-				"temperature":           0.9,
-				"maxTemperature":        2.0,
-				"topP":                  1.0,
-				"topK":                  40,
+				"temperature":                0.9,
+				"maxTemperature":             2.0,
+				"topP":                       1.0,
+				"topK":                       40,
 			}
 			geminiModels = append(geminiModels, geminiModel)
 		}

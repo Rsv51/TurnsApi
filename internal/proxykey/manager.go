@@ -44,12 +44,12 @@ func NewManagerWithDB(requestLogger *logger.RequestLogger) *Manager {
 		keys:          make(map[string]*ProxyKey),
 		requestLogger: requestLogger,
 	}
-	
+
 	// 从数据库加载现有密钥
 	if err := m.loadKeysFromDB(); err != nil {
 		log.Printf("Failed to load proxy keys from database: %v", err)
 	}
-	
+
 	return m
 }
 
@@ -58,15 +58,15 @@ func (m *Manager) loadKeysFromDB() error {
 	if m.requestLogger == nil {
 		return nil
 	}
-	
+
 	dbKeys, err := m.requestLogger.GetAllProxyKeys()
 	if err != nil {
 		return fmt.Errorf("failed to get proxy keys from database: %w", err)
 	}
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	for _, dbKey := range dbKeys {
 		// 转换数据库模型到内存模型
 		key := &ProxyKey{
@@ -85,7 +85,7 @@ func (m *Manager) loadKeysFromDB() error {
 
 		m.keys[key.ID] = key
 	}
-	
+
 	log.Printf("Loaded %d proxy keys from database", len(dbKeys))
 	return nil
 }
@@ -215,7 +215,7 @@ func (m *Manager) UpdateUsage(keyStr string) {
 		if key.Key == keyStr {
 			key.LastUsed = time.Now()
 			key.UsageCount++
-			
+
 			// 更新数据库中的最后使用时间
 			if m.requestLogger != nil {
 				if err := m.requestLogger.UpdateProxyKeyLastUsed(key.ID); err != nil {
@@ -260,7 +260,7 @@ func (m *Manager) DeleteKey(id string) error {
 }
 
 // UpdateKey 更新代理密钥信息
-func (m *Manager) UpdateKey(id string, name, description string, isActive bool) error {
+func (m *Manager) UpdateKey(id string, name, description string, isActive bool, allowedGroups []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -269,9 +269,30 @@ func (m *Manager) UpdateKey(id string, name, description string, isActive bool) 
 		return fmt.Errorf("key not found")
 	}
 
+	// 更新内存中的密钥信息
 	key.Name = name
 	key.Description = description
 	key.IsActive = isActive
+	key.AllowedGroups = allowedGroups
+
+	// 更新数据库中的密钥信息
+	if m.requestLogger != nil {
+		dbKey := &logger.ProxyKey{
+			ID:            key.ID,
+			Name:          name,
+			Description:   description,
+			Key:           key.Key,
+			AllowedGroups: allowedGroups,
+			IsActive:      isActive,
+			CreatedAt:     key.CreatedAt,
+			UpdatedAt:     time.Now(),
+		}
+
+		if err := m.requestLogger.UpdateProxyKey(dbKey); err != nil {
+			return fmt.Errorf("failed to update proxy key in database: %w", err)
+		}
+	}
+
 	return nil
 }
 

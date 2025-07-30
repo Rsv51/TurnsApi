@@ -183,6 +183,7 @@ func (s *Server) setupRoutes() {
 		// 代理服务API密钥管理
 		admin.GET("/proxy-keys", s.handleProxyKeys)
 		admin.POST("/proxy-keys", s.handleGenerateProxyKey)
+		admin.PUT("/proxy-keys/:id", s.handleUpdateProxyKey)
 		admin.DELETE("/proxy-keys/:id", s.handleDeleteProxyKey)
 		// 获取完整模型列表（用于管理界面）
 		admin.GET("/available-models", s.handleAvailableModels)
@@ -470,6 +471,51 @@ func (s *Server) handleGenerateProxyKey(c *gin.Context) {
 		"success": true,
 		"key":     key,
 		"message": "代理服务API密钥生成成功",
+	})
+}
+
+// handleUpdateProxyKey 更新代理服务API密钥
+func (s *Server) handleUpdateProxyKey(c *gin.Context) {
+	keyID := c.Param("id")
+
+	var req struct {
+		Name          string   `json:"name" binding:"required"`
+		Description   string   `json:"description"`
+		IsActive      *bool    `json:"is_active"`
+		AllowedGroups []string `json:"allowed_groups"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request format",
+			"code":  "invalid_request",
+		})
+		return
+	}
+
+	// 如果没有提供 IsActive，默认为 true
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+
+	// 如果没有提供 AllowedGroups，默认为空数组
+	allowedGroups := req.AllowedGroups
+	if allowedGroups == nil {
+		allowedGroups = []string{}
+	}
+
+	if err := s.proxyKeyManager.UpdateKey(keyID, req.Name, req.Description, isActive, allowedGroups); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+			"code":  "update_proxy_key_failed",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "代理服务API密钥更新成功",
 	})
 }
 

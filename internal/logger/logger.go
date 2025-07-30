@@ -115,6 +115,11 @@ func (r *RequestLogger) GetAllProxyKeys() ([]*ProxyKey, error) {
 	return r.db.GetAllProxyKeys()
 }
 
+// UpdateProxyKey 更新代理密钥信息
+func (r *RequestLogger) UpdateProxyKey(key *ProxyKey) error {
+	return r.db.UpdateProxyKey(key)
+}
+
 // UpdateProxyKeyLastUsed 更新代理密钥最后使用时间
 func (r *RequestLogger) UpdateProxyKeyLastUsed(keyID string) error {
 	return r.db.UpdateProxyKeyLastUsed(keyID)

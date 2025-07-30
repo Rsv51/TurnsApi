@@ -556,10 +556,6 @@ func (d *Database) InsertProxyKey(key *ProxyKey) error {
 		}
 	}
 
-
-
-
-
 	query := `
 	INSERT INTO proxy_keys (id, name, description, key, allowed_groups, is_active, created_at, updated_at)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -650,10 +646,39 @@ func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 	return keys, nil
 }
 
+// UpdateProxyKey 更新代理密钥信息
+func (d *Database) UpdateProxyKey(key *ProxyKey) error {
+	// 将AllowedGroups转换为JSON字符串
+	allowedGroupsJSON := "[]"
+	if key.AllowedGroups != nil && len(key.AllowedGroups) > 0 {
+		if jsonBytes, err := json.Marshal(key.AllowedGroups); err == nil {
+			allowedGroupsJSON = string(jsonBytes)
+		} else {
+			log.Printf("Failed to marshal AllowedGroups: %v", err)
+		}
+	}
+
+	query := `
+	UPDATE proxy_keys
+	SET name = ?, description = ?, allowed_groups = ?, is_active = ?, updated_at = ?
+	WHERE id = ?
+	`
+
+	now := time.Now()
+	_, err := d.db.Exec(query,
+		key.Name, key.Description, allowedGroupsJSON, key.IsActive, now, key.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update proxy key: %w", err)
+	}
+
+	return nil
+}
+
 // UpdateProxyKeyLastUsed 更新代理密钥最后使用时间
 func (d *Database) UpdateProxyKeyLastUsed(keyID string) error {
 	query := `UPDATE proxy_keys SET last_used_at = ?, updated_at = ? WHERE id = ?`
-	
+
 	now := time.Now()
 	_, err := d.db.Exec(query, now, now, keyID)
 	if err != nil {
@@ -666,7 +691,7 @@ func (d *Database) UpdateProxyKeyLastUsed(keyID string) error {
 // DeleteProxyKey 删除代理密钥
 func (d *Database) DeleteProxyKey(keyID string) error {
 	query := `DELETE FROM proxy_keys WHERE id = ?`
-	
+
 	_, err := d.db.Exec(query, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to delete proxy key: %w", err)
