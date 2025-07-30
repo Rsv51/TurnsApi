@@ -133,7 +133,7 @@ func (p *MultiProviderProxy) convertToGeminiNativeResponse(response *providers.C
 					"role": "model",
 				},
 				"finishReason": response.Choices[0].FinishReason,
-				"index":       response.Choices[0].Index,
+				"index":        response.Choices[0].Index,
 			},
 		},
 		"usageMetadata": map[string]interface{}{
@@ -150,9 +150,9 @@ func (p *MultiProviderProxy) convertToGeminiNativeResponse(response *providers.C
 func (p *MultiProviderProxy) convertToAnthropicNativeResponse(response *providers.ChatCompletionResponse) (interface{}, error) {
 	// 构造Anthropic原生响应格式
 	nativeResponse := map[string]interface{}{
-		"id":      response.ID,
-		"type":    "message",
-		"role":    "assistant",
+		"id":   response.ID,
+		"type": "message",
+		"role": "assistant",
 		"content": []map[string]interface{}{
 			{
 				"type": "text",
@@ -289,9 +289,9 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 
 		// 检查RPM限制
 		if !p.rpmLimiter.Allow(routeResult.GroupID) {
-			log.Printf("RPM limit exceeded for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
-			// 报告失败（由于限流）
-			p.providerRouter.ReportFailure(req.Model, routeResult.GroupID)
+			// log.Printf("RPM limit exceeded for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
+			// 注意：RPM限制不应该被视为分组失败，因为这是正常的限流行为
+			// 不调用 ReportFailure，避免分组被错误地临时阻止
 
 			// 如果是最后一次尝试，返回限流错误
 			if attempt == maxRetries-1 {
