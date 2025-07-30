@@ -204,6 +204,7 @@ func (s *MultiProviderServer) setupRoutes() {
 		admin.GET("/logs/export", s.handleExportLogs)
 		admin.GET("/logs/stats/api-keys", s.handleAPIKeyStats)
 		admin.GET("/logs/stats/models", s.handleModelStats)
+		admin.GET("/logs/stats/tokens", s.handleTotalTokensStats)
 
 		// 代理密钥管理
 		admin.GET("/proxy-keys", s.handleProxyKeys)
@@ -1829,6 +1830,31 @@ func (s *MultiProviderServer) handleModelStats(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "Failed to get model stats: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"stats":   stats,
+	})
+}
+
+// handleTotalTokensStats 处理总token数统计
+func (s *MultiProviderServer) handleTotalTokensStats(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Request logger not available",
+		})
+		return
+	}
+
+	stats, err := s.requestLogger.GetTotalTokensStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get total tokens stats: " + err.Error(),
 		})
 		return
 	}

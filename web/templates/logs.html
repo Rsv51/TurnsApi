@@ -8,6 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto px-4 py-8" x-data="logsManagement()">
@@ -24,6 +25,34 @@
                 <button @click="refreshLogs()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
                     刷新数据
                 </button>
+            </div>
+        </div>
+
+        <!-- Total Tokens Stats -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Token使用统计</h2>
+                <button @click="refreshTokenStats()" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm transition duration-200">
+                    刷新Token统计
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600" x-text="totalTokensUsed.toLocaleString()"></div>
+                    <div class="text-sm text-gray-600">总Token数</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600" x-text="successTokensUsed.toLocaleString()"></div>
+                    <div class="text-sm text-gray-600">成功Token数</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600" x-text="avgTokensPerRequest"></div>
+                    <div class="text-sm text-gray-600">平均Token/请求</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-orange-600" x-text="tokenSuccessRate + '%'"></div>
+                    <div class="text-sm text-gray-600">Token成功率</div>
+                </div>
             </div>
         </div>
 
@@ -82,6 +111,39 @@
                         <p class="text-sm font-medium text-gray-600">平均响应时间</p>
                         <p class="text-2xl font-semibold text-gray-900" x-text="avgResponseTime + 'ms'"></p>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-bold mb-6 text-gray-800">数据可视化</h2>
+
+            <!-- 第一行图表 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                <!-- 请求状态分布饼图 -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">请求状态分布</h3>
+                    <div id="statusChart" class="flex justify-center min-h-[250px]"></div>
+                </div>
+                <!-- 模型使用统计柱状图 -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">模型使用统计</h3>
+                    <div id="modelChart" class="min-h-[250px]"></div>
+                </div>
+            </div>
+
+            <!-- 第二行图表 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Token使用趋势图 -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">Token使用趋势</h3>
+                    <div id="tokenTrendChart" class="min-h-[250px]"></div>
+                </div>
+                <!-- 响应时间分布图 -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">响应时间分布</h3>
+                    <div id="responseTimeChart" class="min-h-[250px]"></div>
                 </div>
             </div>
         </div>
@@ -185,8 +247,8 @@
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">响应时间</th>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Token数</th>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">客户端IP</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">错误</th>
                             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">错误</th>
                         </tr>
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
@@ -224,11 +286,11 @@
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.duration + 'ms'"></td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.tokens_used || '-'"></td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.client_ip || '-'"></td>
-                                <td class="px-4 py-4 whitespace-nowrap text-sm text-red-600 max-w-xs truncate"
-                                    :title="log.error" x-text="log.error || '-'"></td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
                                     <button @click="viewLogDetail(log.id)" class="text-indigo-600 hover:text-indigo-900">查看详情</button>
                                 </td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm text-red-600 max-w-xs truncate"
+                                    :title="log.error" x-text="log.error || '-'"></td>    
                             </tr>
                         </template>
                     </tbody>
@@ -386,6 +448,10 @@
                 successRequests: 0,
                 errorRequests: 0,
                 avgResponseTime: 0,
+                totalTokensUsed: 0,
+                successTokensUsed: 0,
+                avgTokensPerRequest: 0,
+                tokenSuccessRate: 0,
                 proxyKeys: [],
                 providerGroups: [],
                 models: [],
@@ -397,9 +463,14 @@
                     stream: ''
                 },
 
-                init() {
-                    this.loadLogs();
-                    this.loadStats();
+                async init() {
+                    await this.loadLogs();
+                    await this.loadStats();
+                    await this.loadTokenStats();
+                    // 延迟初始化图表，确保数据已加载
+                    setTimeout(() => {
+                        this.initCharts();
+                    }, 100);
                 },
 
                 get totalPages() {
@@ -500,9 +571,36 @@
                     }
                 },
 
-                refreshLogs() {
-                    this.loadLogs();
-                    this.loadStats();
+                async refreshLogs() {
+                    await this.loadLogs();
+                    await this.loadStats();
+                    await this.loadTokenStats();
+                    // 延迟更新图表，确保数据已加载
+                    setTimeout(() => {
+                        this.updateCharts();
+                    }, 100);
+                },
+
+                async loadTokenStats() {
+                    try {
+                        const response = await fetch('/admin/logs/stats/tokens');
+                        const data = await response.json();
+
+                        if (data.success && data.stats) {
+                            this.totalTokensUsed = data.stats.total_tokens || 0;
+                            this.successTokensUsed = data.stats.success_tokens || 0;
+                            this.avgTokensPerRequest = data.stats.success_requests > 0 ?
+                                Math.round(this.successTokensUsed / data.stats.success_requests) : 0;
+                            this.tokenSuccessRate = data.stats.total_requests > 0 ?
+                                Math.round((data.stats.success_requests / data.stats.total_requests) * 100) : 0;
+                        }
+                    } catch (error) {
+                        console.error('Error loading token stats:', error);
+                    }
+                },
+
+                refreshTokenStats() {
+                    this.loadTokenStats();
                 },
 
                 previousPage() {
@@ -681,6 +779,590 @@
                     if (this.confirmCallback) {
                         this.confirmCallback();
                     }
+                },
+
+                // 初始化图表
+                initCharts() {
+                    this.createStatusChart();
+                    this.createModelChart();
+                    this.createTokenTrendChart();
+                    this.createResponseTimeChart();
+                },
+
+                // 更新图表
+                updateCharts() {
+                    this.createStatusChart();
+                    this.createModelChart();
+                    this.createTokenTrendChart();
+                    this.createResponseTimeChart();
+                },
+
+                // 创建状态分布饼图
+                createStatusChart() {
+                    const container = d3.select("#statusChart");
+                    container.selectAll("*").remove();
+
+                    const data = [
+                        { label: "成功", value: this.successRequests, color: "#10B981" },
+                        { label: "失败", value: this.errorRequests, color: "#EF4444" }
+                    ].filter(d => d.value > 0); // 只显示有数据的部分
+
+                    if (data.length === 0) {
+                        container.append("div")
+                            .style("display", "flex")
+                            .style("align-items", "center")
+                            .style("justify-content", "center")
+                            .style("height", "200px")
+                            .style("color", "#9CA3AF")
+                            .style("font-size", "14px")
+                            .text("暂无数据");
+                        return;
+                    }
+
+                    const containerWidth = 350;
+                    const containerHeight = 200;
+                    const radius = 70;
+
+                    const svg = container.append("svg")
+                        .attr("width", containerWidth)
+                        .attr("height", containerHeight)
+                        .style("overflow", "visible");
+
+                    const g = svg.append("g")
+                        .attr("transform", `translate(${radius + 20},${containerHeight/2})`);
+
+                    const pie = d3.pie()
+                        .value(d => d.value)
+                        .sort(null)
+                        .padAngle(0.02);
+
+                    const arc = d3.arc()
+                        .innerRadius(25)
+                        .outerRadius(radius);
+
+                    const arcs = g.selectAll(".arc")
+                        .data(pie(data))
+                        .enter().append("g")
+                        .attr("class", "arc");
+
+                    // 添加路径动画
+                    arcs.append("path")
+                        .attr("d", arc)
+                        .attr("fill", d => d.data.color)
+                        .attr("stroke", "white")
+                        .attr("stroke-width", 2)
+                        .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.1))")
+                        .transition()
+                        .duration(1000)
+                        .attrTween("d", function(d) {
+                            const interpolate = d3.interpolate({startAngle: 0, endAngle: 0}, d);
+                            return function(t) {
+                                return arc(interpolate(t));
+                            };
+                        });
+
+                    // 添加百分比标签
+                    arcs.append("text")
+                        .attr("transform", d => `translate(${arc.centroid(d)})`)
+                        .attr("text-anchor", "middle")
+                        .style("font-size", "12px")
+                        .style("fill", "white")
+                        .style("font-weight", "bold")
+                        .text(d => {
+                            const total = data.reduce((sum, item) => sum + item.value, 0);
+                            const percentage = Math.round((d.data.value / total) * 100);
+                            return `${percentage}%`;
+                        });
+
+                    // 添加图例
+                    const legend = svg.append("g")
+                        .attr("transform", `translate(${radius * 2 + 50}, 30)`);
+
+                    data.forEach((d, i) => {
+                        const legendRow = legend.append("g")
+                            .attr("transform", `translate(0, ${i * 25})`);
+
+                        legendRow.append("circle")
+                            .attr("cx", 8)
+                            .attr("cy", 8)
+                            .attr("r", 6)
+                            .attr("fill", d.color);
+
+                        legendRow.append("text")
+                            .attr("x", 20)
+                            .attr("y", 8)
+                            .attr("dy", "0.35em")
+                            .style("font-size", "12px")
+                            .style("fill", "#374151")
+                            .text(`${d.label}: ${d.value.toLocaleString()}`);
+                    });
+
+                    // 添加中心文字
+                    g.append("text")
+                        .attr("text-anchor", "middle")
+                        .attr("dy", "-0.5em")
+                        .style("font-size", "14px")
+                        .style("font-weight", "bold")
+                        .style("fill", "#374151")
+                        .text("总请求");
+
+                    g.append("text")
+                        .attr("text-anchor", "middle")
+                        .attr("dy", "1em")
+                        .style("font-size", "16px")
+                        .style("font-weight", "bold")
+                        .style("fill", "#1F2937")
+                        .text(this.totalRequests.toLocaleString());
+                },
+
+                // 创建模型使用统计柱状图
+                createModelChart() {
+                    const container = d3.select("#modelChart");
+                    container.selectAll("*").remove();
+
+                    // 统计模型使用情况
+                    const modelStats = {};
+                    this.logs.forEach(log => {
+                        if (log.model) {
+                            modelStats[log.model] = (modelStats[log.model] || 0) + 1;
+                        }
+                    });
+
+                    const data = Object.entries(modelStats)
+                        .map(([model, count]) => ({
+                            model: model.length > 15 ? model.substring(0, 15) + '...' : model,
+                            fullModel: model,
+                            count
+                        }))
+                        .sort((a, b) => b.count - a.count)
+                        .slice(0, 6); // 只显示前6个
+
+                    if (data.length === 0) {
+                        container.append("div")
+                            .style("display", "flex")
+                            .style("align-items", "center")
+                            .style("justify-content", "center")
+                            .style("height", "200px")
+                            .style("color", "#9CA3AF")
+                            .style("font-size", "14px")
+                            .text("暂无数据");
+                        return;
+                    }
+
+                    const margin = { top: 20, right: 20, bottom: 70, left: 50 };
+                    const width = 320 - margin.left - margin.right;
+                    const height = 200 - margin.top - margin.bottom;
+
+                    const svg = container.append("svg")
+                        .attr("width", width + margin.left + margin.right)
+                        .attr("height", height + margin.top + margin.bottom)
+                        .style("overflow", "visible");
+
+                    const g = svg.append("g")
+                        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+                    const x = d3.scaleBand()
+                        .domain(data.map(d => d.model))
+                        .range([0, width])
+                        .padding(0.2);
+
+                    const y = d3.scaleLinear()
+                        .domain([0, d3.max(data, d => d.count)])
+                        .nice()
+                        .range([height, 0]);
+
+                    // 创建渐变
+                    const gradient = svg.append("defs")
+                        .append("linearGradient")
+                        .attr("id", "barGradient")
+                        .attr("gradientUnits", "userSpaceOnUse")
+                        .attr("x1", 0).attr("y1", height)
+                        .attr("x2", 0).attr("y2", 0);
+
+                    gradient.append("stop")
+                        .attr("offset", "0%")
+                        .attr("stop-color", "#3B82F6");
+
+                    gradient.append("stop")
+                        .attr("offset", "100%")
+                        .attr("stop-color", "#1D4ED8");
+
+                    // 添加柱状图
+                    g.selectAll(".bar")
+                        .data(data)
+                        .enter().append("rect")
+                        .attr("class", "bar")
+                        .attr("x", d => x(d.model))
+                        .attr("width", x.bandwidth())
+                        .attr("y", height)
+                        .attr("height", 0)
+                        .attr("fill", "url(#barGradient)")
+                        .attr("rx", 4)
+                        .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.1))")
+                        .transition()
+                        .duration(1000)
+                        .delay((d, i) => i * 100)
+                        .attr("y", d => y(d.count))
+                        .attr("height", d => height - y(d.count));
+
+                    // 添加数值标签
+                    g.selectAll(".label")
+                        .data(data)
+                        .enter().append("text")
+                        .attr("class", "label")
+                        .attr("x", d => x(d.model) + x.bandwidth() / 2)
+                        .attr("y", d => y(d.count) - 8)
+                        .attr("text-anchor", "middle")
+                        .style("font-size", "11px")
+                        .style("font-weight", "bold")
+                        .style("fill", "#374151")
+                        .style("opacity", 0)
+                        .text(d => d.count)
+                        .transition()
+                        .duration(1000)
+                        .delay((d, i) => i * 100 + 500)
+                        .style("opacity", 1);
+
+                    // X轴
+                    g.append("g")
+                        .attr("transform", `translate(0,${height})`)
+                        .call(d3.axisBottom(x))
+                        .selectAll("text")
+                        .style("font-size", "10px")
+                        .style("fill", "#6B7280")
+                        .attr("transform", "rotate(-45)")
+                        .style("text-anchor", "end");
+
+                    // Y轴
+                    g.append("g")
+                        .call(d3.axisLeft(y).ticks(5))
+                        .selectAll("text")
+                        .style("font-size", "10px")
+                        .style("fill", "#6B7280");
+
+                    // 添加网格线
+                    g.append("g")
+                        .attr("class", "grid")
+                        .call(d3.axisLeft(y)
+                            .ticks(5)
+                            .tickSize(-width)
+                            .tickFormat("")
+                        )
+                        .style("stroke-dasharray", "3,3")
+                        .style("opacity", 0.3);
+                },
+
+                // 创建Token使用趋势图
+                createTokenTrendChart() {
+                    const container = d3.select("#tokenTrendChart");
+                    container.selectAll("*").remove();
+
+                    // 按日期统计token使用
+                    const tokenByDate = {};
+                    this.logs.forEach(log => {
+                        if (log.tokens_used && log.tokens_used > 0 && log.created_at) {
+                            const date = new Date(log.created_at).toISOString().split('T')[0]; // YYYY-MM-DD格式
+                            tokenByDate[date] = (tokenByDate[date] || 0) + log.tokens_used;
+                        }
+                    });
+
+                    const data = Object.entries(tokenByDate)
+                        .map(([date, tokens]) => ({ date: new Date(date), tokens }))
+                        .sort((a, b) => a.date - b.date)
+                        .slice(-7); // 最近7天
+
+                    if (data.length === 0) {
+                        container.append("div")
+                            .style("display", "flex")
+                            .style("align-items", "center")
+                            .style("justify-content", "center")
+                            .style("height", "200px")
+                            .style("color", "#9CA3AF")
+                            .style("font-size", "14px")
+                            .text("暂无Token使用数据");
+                        return;
+                    }
+
+                    const margin = { top: 20, right: 20, bottom: 50, left: 60 };
+                    const width = 320 - margin.left - margin.right;
+                    const height = 200 - margin.top - margin.bottom;
+
+                    const svg = container.append("svg")
+                        .attr("width", width + margin.left + margin.right)
+                        .attr("height", height + margin.top + margin.bottom)
+                        .style("overflow", "visible");
+
+                    const g = svg.append("g")
+                        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+                    const x = d3.scaleTime()
+                        .domain(d3.extent(data, d => d.date))
+                        .range([0, width]);
+
+                    const y = d3.scaleLinear()
+                        .domain([0, d3.max(data, d => d.tokens)])
+                        .nice()
+                        .range([height, 0]);
+
+                    const line = d3.line()
+                        .x(d => x(d.date))
+                        .y(d => y(d.tokens))
+                        .curve(d3.curveCardinal);
+
+                    // 添加渐变
+                    const gradient = svg.append("defs")
+                        .append("linearGradient")
+                        .attr("id", "tokenGradient")
+                        .attr("gradientUnits", "userSpaceOnUse")
+                        .attr("x1", 0).attr("y1", height)
+                        .attr("x2", 0).attr("y2", 0);
+
+                    gradient.append("stop")
+                        .attr("offset", "0%")
+                        .attr("stop-color", "#8B5CF6")
+                        .attr("stop-opacity", 0.1);
+
+                    gradient.append("stop")
+                        .attr("offset", "100%")
+                        .attr("stop-color", "#8B5CF6")
+                        .attr("stop-opacity", 0.6);
+
+                    // 添加网格线
+                    g.append("g")
+                        .attr("class", "grid")
+                        .call(d3.axisLeft(y)
+                            .ticks(5)
+                            .tickSize(-width)
+                            .tickFormat("")
+                        )
+                        .style("stroke-dasharray", "3,3")
+                        .style("opacity", 0.3);
+
+                    // 添加面积
+                    const area = d3.area()
+                        .x(d => x(d.date))
+                        .y0(height)
+                        .y1(d => y(d.tokens))
+                        .curve(d3.curveCardinal);
+
+                    g.append("path")
+                        .datum(data)
+                        .attr("fill", "url(#tokenGradient)")
+                        .attr("d", area)
+                        .style("opacity", 0)
+                        .transition()
+                        .duration(1500)
+                        .style("opacity", 1);
+
+                    // 添加线条
+                    const path = g.append("path")
+                        .datum(data)
+                        .attr("fill", "none")
+                        .attr("stroke", "#8B5CF6")
+                        .attr("stroke-width", 3)
+                        .attr("d", line)
+                        .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.1))");
+
+                    // 线条动画
+                    const totalLength = path.node().getTotalLength();
+                    path
+                        .attr("stroke-dasharray", totalLength + " " + totalLength)
+                        .attr("stroke-dashoffset", totalLength)
+                        .transition()
+                        .duration(2000)
+                        .attr("stroke-dashoffset", 0);
+
+                    // 添加数据点
+                    g.selectAll(".dot")
+                        .data(data)
+                        .enter().append("circle")
+                        .attr("class", "dot")
+                        .attr("cx", d => x(d.date))
+                        .attr("cy", d => y(d.tokens))
+                        .attr("r", 0)
+                        .attr("fill", "#8B5CF6")
+                        .attr("stroke", "white")
+                        .attr("stroke-width", 2)
+                        .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.2))")
+                        .transition()
+                        .duration(1000)
+                        .delay((d, i) => i * 200 + 1000)
+                        .attr("r", 5);
+
+                    // 添加数值标签
+                    g.selectAll(".label")
+                        .data(data)
+                        .enter().append("text")
+                        .attr("class", "label")
+                        .attr("x", d => x(d.date))
+                        .attr("y", d => y(d.tokens) - 15)
+                        .attr("text-anchor", "middle")
+                        .style("font-size", "10px")
+                        .style("font-weight", "bold")
+                        .style("fill", "#374151")
+                        .style("opacity", 0)
+                        .text(d => d.tokens.toLocaleString())
+                        .transition()
+                        .duration(1000)
+                        .delay((d, i) => i * 200 + 1500)
+                        .style("opacity", 1);
+
+                    // X轴
+                    g.append("g")
+                        .attr("transform", `translate(0,${height})`)
+                        .call(d3.axisBottom(x).tickFormat(d3.timeFormat("%m/%d")))
+                        .selectAll("text")
+                        .style("font-size", "10px")
+                        .style("fill", "#6B7280");
+
+                    // Y轴
+                    g.append("g")
+                        .call(d3.axisLeft(y).ticks(5).tickFormat(d => d.toLocaleString()))
+                        .selectAll("text")
+                        .style("font-size", "10px")
+                        .style("fill", "#6B7280");
+                },
+
+                // 创建响应时间分布图
+                createResponseTimeChart() {
+                    const container = d3.select("#responseTimeChart");
+                    container.selectAll("*").remove();
+
+                    // 统计响应时间分布
+                    const timeRanges = [
+                        { label: "0-1s", min: 0, max: 1000, count: 0, color: "#10B981" },
+                        { label: "1-3s", min: 1000, max: 3000, count: 0, color: "#3B82F6" },
+                        { label: "3-5s", min: 3000, max: 5000, count: 0, color: "#F59E0B" },
+                        { label: "5-10s", min: 5000, max: 10000, count: 0, color: "#EF4444" },
+                        { label: ">10s", min: 10000, max: Infinity, count: 0, color: "#8B5CF6" }
+                    ];
+
+                    this.logs.forEach(log => {
+                        if (log.duration && log.duration > 0) {
+                            const range = timeRanges.find(r => log.duration >= r.min && log.duration < r.max);
+                            if (range) range.count++;
+                        }
+                    });
+
+                    const data = timeRanges.filter(r => r.count > 0);
+                    if (data.length === 0) {
+                        container.append("div")
+                            .style("display", "flex")
+                            .style("align-items", "center")
+                            .style("justify-content", "center")
+                            .style("height", "200px")
+                            .style("color", "#9CA3AF")
+                            .style("font-size", "14px")
+                            .text("暂无响应时间数据");
+                        return;
+                    }
+
+                    const margin = { top: 20, right: 20, bottom: 50, left: 50 };
+                    const width = 320 - margin.left - margin.right;
+                    const height = 200 - margin.top - margin.bottom;
+
+                    const svg = container.append("svg")
+                        .attr("width", width + margin.left + margin.right)
+                        .attr("height", height + margin.top + margin.bottom)
+                        .style("overflow", "visible");
+
+                    const g = svg.append("g")
+                        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+                    const x = d3.scaleBand()
+                        .domain(data.map(d => d.label))
+                        .range([0, width])
+                        .padding(0.3);
+
+                    const y = d3.scaleLinear()
+                        .domain([0, d3.max(data, d => d.count)])
+                        .nice()
+                        .range([height, 0]);
+
+                    // 添加网格线
+                    g.append("g")
+                        .attr("class", "grid")
+                        .call(d3.axisLeft(y)
+                            .ticks(5)
+                            .tickSize(-width)
+                            .tickFormat("")
+                        )
+                        .style("stroke-dasharray", "3,3")
+                        .style("opacity", 0.3);
+
+                    // 添加柱状图
+                    g.selectAll(".bar")
+                        .data(data)
+                        .enter().append("rect")
+                        .attr("class", "bar")
+                        .attr("x", d => x(d.label))
+                        .attr("width", x.bandwidth())
+                        .attr("y", height)
+                        .attr("height", 0)
+                        .attr("fill", d => d.color)
+                        .attr("rx", 4)
+                        .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.1))")
+                        .transition()
+                        .duration(1000)
+                        .delay((d, i) => i * 150)
+                        .attr("y", d => y(d.count))
+                        .attr("height", d => height - y(d.count));
+
+                    // 添加数值标签
+                    g.selectAll(".label")
+                        .data(data)
+                        .enter().append("text")
+                        .attr("class", "label")
+                        .attr("x", d => x(d.label) + x.bandwidth() / 2)
+                        .attr("y", d => y(d.count) - 8)
+                        .attr("text-anchor", "middle")
+                        .style("font-size", "11px")
+                        .style("font-weight", "bold")
+                        .style("fill", "#374151")
+                        .style("opacity", 0)
+                        .text(d => d.count)
+                        .transition()
+                        .duration(1000)
+                        .delay((d, i) => i * 150 + 500)
+                        .style("opacity", 1);
+
+                    // X轴
+                    g.append("g")
+                        .attr("transform", `translate(0,${height})`)
+                        .call(d3.axisBottom(x))
+                        .selectAll("text")
+                        .style("font-size", "10px")
+                        .style("fill", "#6B7280");
+
+                    // Y轴
+                    g.append("g")
+                        .call(d3.axisLeft(y).ticks(5))
+                        .selectAll("text")
+                        .style("font-size", "10px")
+                        .style("fill", "#6B7280");
+
+                    // 添加图例
+                    const legend = svg.append("g")
+                        .attr("transform", `translate(${margin.left}, ${height + margin.top + 35})`);
+
+                    const legendItems = legend.selectAll(".legend-item")
+                        .data(data)
+                        .enter().append("g")
+                        .attr("class", "legend-item")
+                        .attr("transform", (d, i) => `translate(${i * 60}, 0)`);
+
+                    legendItems.append("rect")
+                        .attr("width", 8)
+                        .attr("height", 8)
+                        .attr("fill", d => d.color)
+                        .attr("rx", 2);
+
+                    legendItems.append("text")
+                        .attr("x", 12)
+                        .attr("y", 6)
+                        .style("font-size", "9px")
+                        .style("fill", "#6B7280")
+                        .text(d => d.label);
                 }
             }
         }

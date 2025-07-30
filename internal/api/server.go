@@ -192,6 +192,7 @@ func (s *Server) setupRoutes() {
 		admin.GET("/logs/:id", s.handleRequestLogDetail)
 		admin.GET("/logs/stats/api-keys", s.handleAPIKeyStats)
 		admin.GET("/logs/stats/models", s.handleModelStats)
+		admin.GET("/logs/stats/tokens", s.handleTotalTokensStats)
 	}
 
 	// 静态文件
@@ -865,6 +866,33 @@ func (s *Server) handleModelStats(c *gin.Context) {
 		log.Printf("Failed to get model stats: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to get model stats",
+			"code":  "get_stats_failed",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"stats":   stats,
+	})
+}
+
+// handleTotalTokensStats 获取总token数统计
+func (s *Server) handleTotalTokensStats(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Request logging is not available",
+			"code":  "logging_unavailable",
+		})
+		return
+	}
+
+	// 获取总token数统计
+	stats, err := s.requestLogger.GetTotalTokensStats()
+	if err != nil {
+		log.Printf("Failed to get total tokens stats: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to get total tokens stats",
 			"code":  "get_stats_failed",
 		})
 		return

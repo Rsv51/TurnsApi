@@ -520,6 +520,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 	// 处理流式数据
 	hasData := false
 	responseBuffer := make([]byte, 0, 1024)
+	lastChunks := make([][]byte, 0, 10) // 保存最后10个chunk用于token提取
 
 	for streamResp := range streamChan {
 		if streamResp.Error != nil {
@@ -533,15 +534,26 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 			w.Write(streamResp.Data)
 			flusher.Flush()
 
-			// 收集响应数据用于日志记录（限制大小）
-			if len(responseBuffer) < 10000 {
+			// 收集响应数据用于日志记录
+			if len(responseBuffer) < 5000 { // 减少前面内容的记录
 				responseBuffer = append(responseBuffer, streamResp.Data...)
+			}
+
+			// 保存最后的chunk，用于token提取
+			lastChunks = append(lastChunks, streamResp.Data)
+			if len(lastChunks) > 10 {
+				lastChunks = lastChunks[1:] // 保持最后10个chunk
 			}
 		}
 
 		if streamResp.Done {
 			break
 		}
+	}
+
+	// 将最后的chunk添加到响应缓冲区，确保包含token信息
+	for _, chunk := range lastChunks {
+		responseBuffer = append(responseBuffer, chunk...)
 	}
 
 	duration := time.Since(startTime)

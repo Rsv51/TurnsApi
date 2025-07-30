@@ -472,45 +472,22 @@
             </div>
         </div>
 
-        <!-- Real-time Updates -->
+        <!-- Quick Actions -->
         <div class="bg-white rounded-lg shadow-md p-6">
-            <h2 class="text-xl font-bold mb-6">实时监控</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <h3 class="text-lg font-medium mb-4">监控设置</h3>
-                    <div class="space-y-3">
-                        <div class="flex items-center justify-between">
-                            <span>自动刷新:</span>
-                            <button @click="toggleAutoRefresh()" class="px-3 py-1 rounded text-sm" :class="autoRefresh ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'" x-text="autoRefresh ? '已开启' : '已关闭'"></button>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span>刷新间隔:</span>
-                            <select x-model="refreshInterval" @change="updateRefreshInterval()" class="px-2 py-1 border border-gray-300 rounded text-sm">
-                                <option value="30000">30秒</option>
-                                <option value="60000">1分钟</option>
-                                <option value="300000">5分钟</option>
-                            </select>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span>最后更新:</span>
-                            <span class="text-sm text-gray-500" x-text="formatDate(lastUpdate)"></span>
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <h3 class="text-lg font-medium mb-4">快速操作</h3>
-                    <div class="space-y-2">
-                        <button @click="showProxyKeyModal = true" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg transition duration-200">
-                            代理密钥管理
-                        </button>
-                        <button @click="exportHealthReport()" class="w-full bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
-                            导出健康报告
-                        </button>
-                        <button @click="viewSystemLogs()" class="w-full bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition duration-200">
-                            查看请求日志
-                        </button>
-                    </div>
-                </div>
+            <h2 class="text-xl font-bold mb-6">快速操作</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button @click="showProxyKeyModal = true" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    代理密钥管理
+                </button>
+                <button @click="exportHealthReport()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    导出健康报告
+                </button>
+                <button @click="viewSystemLogs()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition duration-200">
+                    查看请求日志
+                </button>
+            </div>
+            <div class="mt-4 text-sm text-gray-500">
+                最后更新: <span x-text="formatDate(lastUpdate)"></span>
             </div>
         </div>
 
@@ -1366,10 +1343,7 @@
                 providerModels: {},
                 selectedProvider: '',
                 loadingModels: false,
-                autoRefresh: false,
-                refreshInterval: 60000,
                 lastUpdate: new Date(),
-                refreshTimer: null,
 
                 // 密钥状态相关
                 keyStatus: {
@@ -1538,7 +1512,7 @@
                     await this.loadPersistedValidationStatus(false);
                     this.filterProviders();
 
-                    // 启动定时刷新系统健康状态（每30秒）
+                    // 启动系统健康状态的定时刷新（只刷新第一排的系统信息）
                     this.startSystemHealthRefresh();
 
                     // 添加页面可见性变化监听器，确保用户回到页面时数据是最新的
@@ -1589,9 +1563,8 @@
                 },
 
                 async refreshData() {
-                    await this.loadSystemHealth();
-                    await this.loadProviderStatuses();
-                    this.lastUpdate = new Date();
+                    // 手动刷新时刷新所有数据
+                    await this.refreshSystemData();
                 },
 
                 async refreshProviderHealth() {
@@ -1630,14 +1603,15 @@
                     }
                 },
 
-                toggleAutoRefresh() {
-                    this.autoRefresh = !this.autoRefresh;
-                    if (this.autoRefresh) {
-                        this.startAutoRefresh();
-                    } else {
-                        this.stopAutoRefresh();
-                    }
-                },
+                // 移除自动刷新功能
+                // toggleAutoRefresh() {
+                //     this.autoRefresh = !this.autoRefresh;
+                //     if (this.autoRefresh) {
+                //         this.startAutoRefresh();
+                //     } else {
+                //         this.stopAutoRefresh();
+                //     }
+                // },
 
                 // 密钥状态相关方法
                 async loadKeyStatus() {
@@ -2879,25 +2853,26 @@
                     }
                 },
 
-                startAutoRefresh() {
-                    this.stopAutoRefresh();
-                    this.refreshTimer = setInterval(() => {
-                        this.refreshData();
-                    }, this.refreshInterval);
-                },
+                // 移除自动刷新相关方法
+                // startAutoRefresh() {
+                //     this.stopAutoRefresh();
+                //     this.refreshTimer = setInterval(() => {
+                //         this.refreshData();
+                //     }, this.refreshInterval);
+                // },
 
-                stopAutoRefresh() {
-                    if (this.refreshTimer) {
-                        clearInterval(this.refreshTimer);
-                        this.refreshTimer = null;
-                    }
-                },
+                // stopAutoRefresh() {
+                //     if (this.refreshTimer) {
+                //         clearInterval(this.refreshTimer);
+                //         this.refreshTimer = null;
+                //     }
+                // },
 
-                updateRefreshInterval() {
-                    if (this.autoRefresh) {
-                        this.startAutoRefresh();
-                    }
-                },
+                // updateRefreshInterval() {
+                //     if (this.autoRefresh) {
+                //         this.startAutoRefresh();
+                //     }
+                // },
 
                 getStatusText(status) {
                     const statusMap = {
@@ -2942,18 +2917,28 @@
                     return parseFloat(value).toFixed(2) + '%';
                 },
 
-                // 启动定时刷新系统健康状态（每30秒）
+                // 启动系统健康状态的定时刷新（只刷新第一排系统信息）
                 startSystemHealthRefresh() {
                     // 立即执行一次刷新
-                    this.refreshSystemData();
+                    this.refreshSystemHealthOnly();
 
-                    // 设置定时器，每300秒刷新一次
+                    // 设置定时器，每60秒刷新一次系统健康状态
                     setInterval(() => {
-                        this.refreshSystemData();
-                    }, 300000);
+                        this.refreshSystemHealthOnly();
+                    }, 60000); // 60秒刷新一次
                 },
 
-                // 刷新系统数据（不包括密钥验证）
+                // 只刷新系统健康状态（第一排的系统信息）
+                async refreshSystemHealthOnly() {
+                    try {
+                        await this.loadSystemHealth();
+                        this.lastUpdate = new Date();
+                    } catch (error) {
+                        console.error('Failed to refresh system health:', error);
+                    }
+                },
+
+                // 刷新所有数据（手动刷新时使用）
                 async refreshSystemData() {
                     try {
                         await Promise.all([

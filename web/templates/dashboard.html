@@ -587,9 +587,10 @@
                         <button @click="refreshStatus()" class="w-full bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition duration-200">
                             刷新状态
                         </button>
-                        <button @click="toggleAutoRefresh()" class="w-full border border-gray-300 hover:bg-gray-50 px-4 py-2 rounded-lg transition duration-200" :class="autoRefresh ? 'bg-green-50 border-green-300' : ''">
+                        <!-- 移除自动刷新按钮 -->
+                        <!-- <button @click="toggleAutoRefresh()" class="w-full border border-gray-300 hover:bg-gray-50 px-4 py-2 rounded-lg transition duration-200" :class="autoRefresh ? 'bg-green-50 border-green-300' : ''">
                             <span x-text="autoRefresh ? '停止自动刷新' : '开启自动刷新'"></span>
-                        </button>
+                        </button> -->
                     </div>
                 </div>
             </div>
@@ -1076,8 +1077,9 @@
                     healthy: true,
                     lastUpdate: new Date().toLocaleString()
                 },
-                autoRefresh: false,
-                refreshInterval: null,
+                // 移除自动刷新相关变量
+                // autoRefresh: false,
+                // refreshInterval: null,
                 
                 async refreshStatus() {
                     try {
@@ -1091,19 +1093,20 @@
                     }
                 },
                 
-                toggleAutoRefresh() {
-                    this.autoRefresh = !this.autoRefresh;
-                    if (this.autoRefresh) {
-                        this.refreshInterval = setInterval(() => {
-                            this.refreshStatus();
-                        }, 30000); // 30秒刷新一次
-                    } else {
-                        if (this.refreshInterval) {
-                            clearInterval(this.refreshInterval);
-                            this.refreshInterval = null;
-                        }
-                    }
-                },
+                // 移除自动刷新功能
+                // toggleAutoRefresh() {
+                //     this.autoRefresh = !this.autoRefresh;
+                //     if (this.autoRefresh) {
+                //         this.refreshInterval = setInterval(() => {
+                //             this.refreshStatus();
+                //         }, 30000); // 30秒刷新一次
+                //     } else {
+                //         if (this.refreshInterval) {
+                //             clearInterval(this.refreshInterval);
+                //             this.refreshInterval = null;
+                //         }
+                //     }
+                // },
                 
                 init() {
                     this.refreshStatus();
@@ -1133,18 +1136,19 @@
             // 初始化获取服务器启动时间
             getServerStartTime();
 
-            setInterval(() => {
-                if (serverStartTime) {
-                    const now = new Date();
-                    const diff = now - serverStartTime;
-                    const hours = Math.floor(diff / (1000 * 60 * 60));
-                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-                    document.getElementById('uptime').textContent = `${hours}h ${minutes}m ${seconds}s`;
-                } else {
-                    document.getElementById('uptime').textContent = '--';
-                }
-            }, 1000);
+            // 移除定时更新运行时间
+            // setInterval(() => {
+            //     if (serverStartTime) {
+            //         const now = new Date();
+            //         const diff = now - serverStartTime;
+            //         const hours = Math.floor(diff / (1000 * 60 * 60));
+            //         const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            //         const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+            //         document.getElementById('uptime').textContent = `${hours}h ${minutes}m ${seconds}s`;
+            //     } else {
+            //         document.getElementById('uptime').textContent = '--';
+            //     }
+            // }, 1000);
         }
         
         // 登出函数

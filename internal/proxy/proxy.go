@@ -61,18 +61,18 @@ func NewOpenRouterProxy(config *internal.Config, keyManager *keymanager.KeyManag
 func (p *OpenRouterProxy) getProxyKeyInfo(c *gin.Context) (string, string) {
 	proxyKeyName, exists1 := c.Get("proxy_key_name")
 	proxyKeyID, exists2 := c.Get("proxy_key_id")
-	
+
 	if !exists1 || !exists2 {
 		return "Unknown", "unknown"
 	}
-	
+
 	name, ok1 := proxyKeyName.(string)
 	id, ok2 := proxyKeyID.(string)
-	
+
 	if !ok1 || !ok2 {
 		return "Unknown", "unknown"
 	}
-	
+
 	return name, id
 }
 
@@ -155,7 +155,7 @@ func (p *OpenRouterProxy) handleStreamingRequestWithRetry(c *gin.Context, req *C
 // handleNonStreamingRequest 处理非流式请求
 func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCompletionRequest, apiKey string) bool {
 	startTime := time.Now()
-	
+
 	// 序列化请求
 	reqBody, err := json.Marshal(req)
 	if err != nil {
@@ -286,7 +286,7 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("OpenRouter API returned status %d: %s", resp.StatusCode, string(respBody))
 		p.keyManager.ReportError(apiKey, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody)))
-		
+
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
@@ -320,7 +320,7 @@ func (p *OpenRouterProxy) handleNonStreamingRequest(c *gin.Context, req *ChatCom
 // handleStreamingRequest 处理流式请求
 func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatCompletionRequest, apiKey string) bool {
 	startTime := time.Now()
-	
+
 	// 序列化请求
 	reqBody, err := json.Marshal(req)
 	if err != nil {
@@ -409,7 +409,7 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("OpenRouter API returned status %d: %s", resp.StatusCode, string(respBody))
 		p.keyManager.ReportError(apiKey, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody)))
-		
+
 		// 记录日志
 		if p.requestLogger != nil {
 			proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
@@ -483,7 +483,8 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 	// 流式转发响应
 	hasData := false
 	var responseBuffer strings.Builder
-	
+	lastLines := make([]string, 0, 20) // 保存最后20行用于token提取
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -499,7 +500,12 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 					proxyKeyName, proxyKeyID := p.getProxyKeyInfo(c)
 					providerGroup := p.getProviderGroup(c, req.Model)
 					clientIP := logger.GetClientIP(c)
-					p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), responseBuffer.String(), clientIP, 502, true, time.Since(startTime), err)
+					// 构建完整响应用于日志
+					fullResponse := responseBuffer.String()
+					for _, lastLine := range lastLines {
+						fullResponse += lastLine
+					}
+					p.requestLogger.LogRequest(proxyKeyName, proxyKeyID, providerGroup, apiKey, req.Model, string(reqBody), fullResponse, clientIP, 502, true, time.Since(startTime), err)
 				}
 				return false
 			}
@@ -514,11 +520,23 @@ func (p *OpenRouterProxy) handleStreamingRequest(c *gin.Context, req *ChatComple
 		if strings.HasPrefix(line, "data: ") || strings.HasPrefix(line, "event: ") || line == "\n" {
 			w.Write([]byte(line))
 			flusher.Flush()
-			// 收集响应数据用于日志记录（限制大小以避免内存问题）
-			if responseBuffer.Len() < 10000 { // 限制为10KB
+
+			// 收集响应数据用于日志记录
+			if responseBuffer.Len() < 5000 { // 减少前面内容的记录
 				responseBuffer.WriteString(line)
 			}
+
+			// 保存最后的行，用于token提取
+			lastLines = append(lastLines, line)
+			if len(lastLines) > 20 {
+				lastLines = lastLines[1:] // 保持最后20行
+			}
 		}
+	}
+
+	// 将最后的行添加到响应缓冲区，确保包含token信息
+	for _, lastLine := range lastLines {
+		responseBuffer.WriteString(lastLine)
 	}
 
 	duration := time.Since(startTime)

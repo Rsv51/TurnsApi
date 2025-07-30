@@ -480,12 +480,12 @@ func (d *Database) GetProxyKeyStats() ([]*ProxyKeyStats, error) {
 // GetModelStats 获取模型统计
 func (d *Database) GetModelStats() ([]*ModelStats, error) {
 	query := `
-	SELECT 
+	SELECT
 		model,
 		COUNT(*) as total_requests,
 		SUM(tokens_used) as total_tokens,
 		AVG(duration) as avg_duration
-	FROM request_logs 
+	FROM request_logs
 	WHERE status_code = 200
 	GROUP BY model
 	ORDER BY total_requests DESC
@@ -507,6 +507,28 @@ func (d *Database) GetModelStats() ([]*ModelStats, error) {
 			return nil, fmt.Errorf("failed to scan model stats: %w", err)
 		}
 		stats = append(stats, stat)
+	}
+
+	return stats, nil
+}
+
+// GetTotalTokensStats 获取总token数统计
+func (d *Database) GetTotalTokensStats() (*TotalTokensStats, error) {
+	query := `
+	SELECT
+		SUM(tokens_used) as total_tokens,
+		SUM(CASE WHEN status_code = 200 THEN tokens_used ELSE 0 END) as success_tokens,
+		COUNT(*) as total_requests,
+		SUM(CASE WHEN status_code = 200 THEN 1 ELSE 0 END) as success_requests
+	FROM request_logs
+	`
+
+	stats := &TotalTokensStats{}
+	err := d.db.QueryRow(query).Scan(
+		&stats.TotalTokens, &stats.SuccessTokens, &stats.TotalRequests, &stats.SuccessRequests,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query total tokens stats: %w", err)
 	}
 
 	return stats, nil

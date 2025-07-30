@@ -100,6 +100,11 @@ func (r *RequestLogger) GetRequestCount(proxyKeyName, providerGroup string) (int
 	return r.db.GetRequestCount(proxyKeyName, providerGroup)
 }
 
+// GetTotalTokensStats 获取总token数统计
+func (r *RequestLogger) GetTotalTokensStats() (*TotalTokensStats, error) {
+	return r.db.GetTotalTokensStats()
+}
+
 // InsertProxyKey 插入代理密钥
 func (r *RequestLogger) InsertProxyKey(key *ProxyKey) error {
 	return r.db.InsertProxyKey(key)
@@ -169,20 +174,100 @@ func (r *RequestLogger) extractTokensUsed(responseBody string) int {
 		return 0
 	}
 
-	// 尝试解析JSON响应
+	// 首先尝试解析JSON响应（非流式）
 	var response map[string]interface{}
-	if err := json.Unmarshal([]byte(responseBody), &response); err != nil {
+	if err := json.Unmarshal([]byte(responseBody), &response); err == nil {
+		// 查找usage字段
+		if usage, ok := response["usage"].(map[string]interface{}); ok {
+			if totalTokens, ok := usage["total_tokens"].(float64); ok {
+				return int(totalTokens)
+			}
+		}
 		return 0
 	}
 
-	// 查找usage字段
-	if usage, ok := response["usage"].(map[string]interface{}); ok {
-		if totalTokens, ok := usage["total_tokens"].(float64); ok {
-			return int(totalTokens)
+	// 如果JSON解析失败，尝试从流式响应中提取token数
+	return r.extractTokensFromStream(responseBody)
+}
+
+// extractTokensFromStream 从流式响应中提取token数量
+func (r *RequestLogger) extractTokensFromStream(streamBody string) int {
+	if streamBody == "" {
+		return 0
+	}
+
+	lines := strings.Split(streamBody, "\n")
+	totalTokens := 0
+
+	// 从后往前遍历，因为token统计通常在最后几个chunk中
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+
+		// 跳过非数据行
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		dataStr := strings.TrimPrefix(line, "data: ")
+
+		// 跳过[DONE]标记、空行和处理状态信息
+		if dataStr == "[DONE]" || dataStr == "" ||
+			strings.Contains(dataStr, "OPENROUTER PROCESSING") ||
+			strings.Contains(dataStr, "PROCESSING") {
+			continue
+		}
+
+		// 尝试解析JSON数据
+		var chunkData map[string]interface{}
+		if err := json.Unmarshal([]byte(dataStr), &chunkData); err != nil {
+			// 如果JSON解析失败，记录调试信息但继续处理
+			log.Printf("Failed to parse JSON chunk: %s, error: %v", dataStr[:min(100, len(dataStr))], err)
+			continue
+		}
+
+		// 查找usage字段（OpenAI格式）
+		if usage, ok := chunkData["usage"].(map[string]interface{}); ok {
+			if tokens, ok := usage["total_tokens"].(float64); ok {
+				totalTokens = int(tokens)
+				log.Printf("Found tokens in stream: %d", totalTokens)
+				break // 找到token统计就退出
+			}
+		}
+
+		// 查找Gemini原生格式的usageMetadata字段
+		if usageMetadata, ok := chunkData["usageMetadata"].(map[string]interface{}); ok {
+			if tokens, ok := usageMetadata["totalTokenCount"].(float64); ok {
+				totalTokens = int(tokens)
+				log.Printf("Found Gemini tokens in stream: %d", totalTokens)
+				break // 找到token统计就退出
+			}
+		}
+
+		// 查找Anthropic格式的usage字段
+		if usage, ok := chunkData["usage"].(map[string]interface{}); ok {
+			if inputTokens, ok1 := usage["input_tokens"].(float64); ok1 {
+				if outputTokens, ok2 := usage["output_tokens"].(float64); ok2 {
+					totalTokens = int(inputTokens + outputTokens)
+					log.Printf("Found Anthropic tokens in stream: %d", totalTokens)
+					break
+				}
+			}
 		}
 	}
 
-	return 0
+	if totalTokens == 0 {
+		log.Printf("No tokens found in stream response, response length: %d", len(streamBody))
+	}
+
+	return totalTokens
+}
+
+// min 返回两个整数中的较小值
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // GetClientIP 获取客户端真实IP地址
