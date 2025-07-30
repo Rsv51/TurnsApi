@@ -1698,7 +1698,7 @@
 
 
                 // 提供商筛选和管理方法
-                filterProviders() {
+                filterProviders(resetPage = true) {
                     let providers = Object.entries(this.providerStatuses);
 
                     // 按创建时间倒序排序（后端已经排序，但为了确保一致性）
@@ -1743,8 +1743,10 @@
                         this.filteredProviders[groupId] = provider;
                     });
 
-                    // 重置页码
-                    this.providerPage = 1;
+                    // 重置页码（可选）
+                    if (resetPage) {
+                        this.providerPage = 1;
+                    }
                 },
 
                 async validateAllKeys() {
@@ -2106,6 +2108,12 @@
                 async submitGroupForm() {
                     this.submittingGroup = true;
                     try {
+                        // 保存当前的页面状态（用于编辑模式保持位置）
+                        const currentPage = this.providerPage;
+                        const currentSearchQuery = this.providerSearchQuery;
+                        const currentStatusFilter = this.providerStatusFilter;
+                        const currentTypeFilter = this.providerTypeFilter;
+
                         // 处理模型列表 - 合并选择的模型和手动输入的模型
                         const manualModels = this.modelsText.split('\n')
                             .map(line => line.trim())
@@ -2164,18 +2172,43 @@
                         if (response.ok) {
                             this.showMessage(data.message, 'success');
 
-                            // 如果是编辑模式，更新本地数据
+                            // 如果是编辑模式，更新本地数据而不重新加载整个列表
                             if (!this.showCreateGroupModal && this.editingGroupId) {
                                 // 更新本地providerStatuses中的数据
                                 if (this.providerStatuses[this.editingGroupId]) {
-                                    this.providerStatuses[this.editingGroupId].use_native_response = this.groupFormData.use_native_response;
-                                    this.providerStatuses[this.editingGroupId].rpm_limit = this.groupFormData.rpm_limit;
+                                    // 更新用户可编辑的字段，保留健康检查相关字段
+                                    Object.assign(this.providerStatuses[this.editingGroupId], {
+                                        group_name: this.groupFormData.name,  // 注意：groupFormData中使用的是name字段
+                                        provider_type: this.groupFormData.provider_type,
+                                        base_url: this.groupFormData.base_url,
+                                        models: this.groupFormData.models,
+                                        model_mappings: this.groupFormData.model_mappings,
+                                        use_native_response: this.groupFormData.use_native_response,
+                                        rpm_limit: this.groupFormData.rpm_limit,
+                                        timeout: this.groupFormData.timeout,
+                                        max_retries: this.groupFormData.max_retries,
+                                        request_params: this.groupFormData.request_params,
+                                        enabled: this.groupFormData.enabled,
+                                        rotation_strategy: this.groupFormData.rotation_strategy
+                                        // 注意：不更新 healthy, last_check, response_time, last_error, total_keys, active_keys 等健康检查字段
+                                    });
                                 }
-                            }
 
-                            this.closeGroupModal();
-                            // 重新加载提供商状态以显示新添加的分组
-                            await this.loadProviderStatuses();
+                                this.closeGroupModal();
+
+                                // 恢复页面状态
+                                this.providerPage = currentPage;
+                                this.providerSearchQuery = currentSearchQuery;
+                                this.providerStatusFilter = currentStatusFilter;
+                                this.providerTypeFilter = currentTypeFilter;
+
+                                // 重新过滤提供商以反映更新，但不重置页面位置
+                                this.filterProviders(false);
+                            } else {
+                                // 创建模式：重新加载提供商状态以显示新添加的分组
+                                this.closeGroupModal();
+                                await this.loadProviderStatuses();
+                            }
 
                             // 额外的数据验证，确保保存的数据正确
                             setTimeout(async () => {
