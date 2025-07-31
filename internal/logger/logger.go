@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pkoukk/tiktoken-go"
 )
 
 // RequestLogger 请求日志记录器
@@ -37,21 +38,36 @@ func (r *RequestLogger) LogRequest(
 	proxyKeyName, proxyKeyID, providerGroup, openRouterKey, model, requestBody, responseBody, clientIP string,
 	statusCode int, isStream bool, duration time.Duration, err error,
 ) {
+	// 提取token使用量
+	tokensUsed := r.extractTokensUsed(responseBody)
+	tokensEstimated := false
+
+	// 如果响应中没有token信息且请求成功，尝试基于请求和响应内容估算
+	if tokensUsed == 0 && statusCode == 200 {
+		estimatedTokens := r.estimateTokensFromRequestAndResponseWithModel(requestBody, responseBody, model)
+		if estimatedTokens > 0 {
+			tokensUsed = estimatedTokens
+			tokensEstimated = true
+			log.Printf("Using comprehensive token estimation for model %s: %d tokens (request + response)", model, tokensUsed)
+		}
+	}
+
 	// 创建日志记录
 	requestLog := &RequestLog{
-		ProxyKeyName:  proxyKeyName,
-		ProxyKeyID:    proxyKeyID,
-		ProviderGroup: providerGroup,
-		OpenRouterKey: r.maskAPIKey(openRouterKey),
-		Model:         model,
-		RequestBody:   requestBody,
-		ResponseBody:  responseBody,
-		StatusCode:    statusCode,
-		IsStream:      isStream,
-		Duration:      duration.Milliseconds(),
-		TokensUsed:    r.extractTokensUsed(responseBody),
-		ClientIP:      clientIP,
-		CreatedAt:     time.Now(),
+		ProxyKeyName:    proxyKeyName,
+		ProxyKeyID:      proxyKeyID,
+		ProviderGroup:   providerGroup,
+		OpenRouterKey:   r.maskAPIKey(openRouterKey),
+		Model:           model,
+		RequestBody:     requestBody,
+		ResponseBody:    responseBody,
+		StatusCode:      statusCode,
+		IsStream:        isStream,
+		Duration:        duration.Milliseconds(),
+		TokensUsed:      tokensUsed,
+		TokensEstimated: tokensEstimated,
+		ClientIP:        clientIP,
+		CreatedAt:       time.Now(),
 	}
 
 	// 如果有错误，记录错误信息
@@ -180,14 +196,31 @@ func (r *RequestLogger) extractTokensUsed(responseBody string) int {
 		// 查找usage字段
 		if usage, ok := response["usage"].(map[string]interface{}); ok {
 			if totalTokens, ok := usage["total_tokens"].(float64); ok {
-				return int(totalTokens)
+				if totalTokens > 0 {
+					return int(totalTokens)
+				}
 			}
+		}
+		// 如果token数为0，尝试使用备用估算方法
+		if estimatedTokens := r.estimateTokensFromResponse(responseBody); estimatedTokens > 0 {
+			log.Printf("Using fallback token estimation: %d tokens", estimatedTokens)
+			return estimatedTokens
 		}
 		return 0
 	}
 
 	// 如果JSON解析失败，尝试从流式响应中提取token数
-	return r.extractTokensFromStream(responseBody)
+	tokens := r.extractTokensFromStream(responseBody)
+
+	// 如果流式响应也没有token信息，使用备用估算方法
+	if tokens == 0 {
+		if estimatedTokens := r.estimateTokensFromResponse(responseBody); estimatedTokens > 0 {
+			log.Printf("Using fallback token estimation for stream: %d tokens", estimatedTokens)
+			return estimatedTokens
+		}
+	}
+
+	return tokens
 }
 
 // extractTokensFromStream 从流式响应中提取token数量
@@ -260,6 +293,389 @@ func (r *RequestLogger) extractTokensFromStream(streamBody string) int {
 	}
 
 	return totalTokens
+}
+
+// estimateTokensFromResponse 备用方法：基于响应内容估算token数量
+func (r *RequestLogger) estimateTokensFromResponse(responseBody string) int {
+	if responseBody == "" {
+		return 0
+	}
+
+	// 尝试从响应中提取文本内容进行估算
+	var totalText strings.Builder
+
+	// 首先尝试解析为JSON并提取文本内容
+	var response map[string]interface{}
+	if err := json.Unmarshal([]byte(responseBody), &response); err == nil {
+		// 提取choices中的content
+		if choices, ok := response["choices"].([]interface{}); ok {
+			for _, choice := range choices {
+				if choiceMap, ok := choice.(map[string]interface{}); ok {
+					// 非流式响应的message.content
+					if message, ok := choiceMap["message"].(map[string]interface{}); ok {
+						if content, ok := message["content"].(string); ok {
+							totalText.WriteString(content)
+						}
+					}
+					// 流式响应的delta.content
+					if delta, ok := choiceMap["delta"].(map[string]interface{}); ok {
+						if content, ok := delta["content"].(string); ok {
+							totalText.WriteString(content)
+						}
+					}
+				}
+			}
+		}
+	} else {
+		// 如果不是JSON，可能是流式响应，尝试提取data行中的内容
+		lines := strings.Split(responseBody, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
+				dataContent := strings.TrimPrefix(line, "data: ")
+
+				// 跳过处理状态信息
+				if strings.Contains(dataContent, "OPENROUTER PROCESSING") ||
+					strings.Contains(dataContent, "PROCESSING") {
+					continue
+				}
+
+				var chunkData map[string]interface{}
+				if err := json.Unmarshal([]byte(dataContent), &chunkData); err == nil {
+					if choices, ok := chunkData["choices"].([]interface{}); ok {
+						for _, choice := range choices {
+							if choiceMap, ok := choice.(map[string]interface{}); ok {
+								if delta, ok := choiceMap["delta"].(map[string]interface{}); ok {
+									if content, ok := delta["content"].(string); ok {
+										totalText.WriteString(content)
+									}
+								}
+								// 也检查message.content（某些情况下可能存在）
+								if message, ok := choiceMap["message"].(map[string]interface{}); ok {
+									if content, ok := message["content"].(string); ok {
+										totalText.WriteString(content)
+									}
+								}
+							}
+						}
+					}
+				} else {
+					// 如果JSON解析失败，记录调试信息
+					log.Printf("Failed to parse chunk for token estimation: %s", dataContent[:min(100, len(dataContent))])
+				}
+			}
+		}
+	}
+
+	// 基于提取的文本内容估算token数
+	text := totalText.String()
+	if text == "" {
+		return 0
+	}
+
+	estimatedTokens := r.estimateTokensFromTextWithModel(text, "gpt-3.5-turbo")
+	log.Printf("Extracted text length: %d characters, estimated tokens: %d", len(text), estimatedTokens)
+	return estimatedTokens
+}
+
+// estimateTokensFromResponseWithModel 备用方法：基于响应内容估算token数量（支持指定模型）
+func (r *RequestLogger) estimateTokensFromResponseWithModel(responseBody, model string) int {
+	if responseBody == "" {
+		return 0
+	}
+
+	// 尝试从响应中提取文本内容进行估算
+	var totalText strings.Builder
+
+	// 首先尝试解析为JSON并提取文本内容
+	var response map[string]interface{}
+	if err := json.Unmarshal([]byte(responseBody), &response); err == nil {
+		// 提取choices中的content
+		if choices, ok := response["choices"].([]interface{}); ok {
+			for _, choice := range choices {
+				if choiceMap, ok := choice.(map[string]interface{}); ok {
+					// 非流式响应的message.content
+					if message, ok := choiceMap["message"].(map[string]interface{}); ok {
+						if content, ok := message["content"].(string); ok {
+							totalText.WriteString(content)
+						}
+					}
+					// 流式响应的delta.content
+					if delta, ok := choiceMap["delta"].(map[string]interface{}); ok {
+						if content, ok := delta["content"].(string); ok {
+							totalText.WriteString(content)
+						}
+					}
+				}
+			}
+		}
+	} else {
+		// 如果不是JSON，可能是流式响应，尝试提取data行中的内容
+		lines := strings.Split(responseBody, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "data: ") && !strings.Contains(line, "[DONE]") {
+				dataContent := strings.TrimPrefix(line, "data: ")
+
+				// 跳过处理状态信息
+				if strings.Contains(dataContent, "OPENROUTER PROCESSING") ||
+					strings.Contains(dataContent, "PROCESSING") {
+					continue
+				}
+
+				var chunkData map[string]interface{}
+				if err := json.Unmarshal([]byte(dataContent), &chunkData); err == nil {
+					if choices, ok := chunkData["choices"].([]interface{}); ok {
+						for _, choice := range choices {
+							if choiceMap, ok := choice.(map[string]interface{}); ok {
+								if delta, ok := choiceMap["delta"].(map[string]interface{}); ok {
+									if content, ok := delta["content"].(string); ok {
+										totalText.WriteString(content)
+									}
+								}
+								// 也检查message.content（某些情况下可能存在）
+								if message, ok := choiceMap["message"].(map[string]interface{}); ok {
+									if content, ok := message["content"].(string); ok {
+										totalText.WriteString(content)
+									}
+								}
+							}
+						}
+					}
+				} else {
+					// 如果JSON解析失败，记录调试信息
+					log.Printf("Failed to parse chunk for token estimation: %s", dataContent[:min(100, len(dataContent))])
+				}
+			}
+		}
+	}
+
+	// 基于提取的文本内容估算token数
+	text := totalText.String()
+	if text == "" {
+		return 0
+	}
+
+	estimatedTokens := r.estimateTokensFromTextWithModel(text, model)
+	log.Printf("Extracted text length: %d characters, estimated tokens for model %s: %d", len(text), model, estimatedTokens)
+	return estimatedTokens
+}
+
+// estimateTokensFromTextWithModel 基于文本内容估算token数量（支持指定模型）
+func (r *RequestLogger) estimateTokensFromTextWithModel(text, model string) int {
+	if text == "" {
+		return 0
+	}
+
+	// 移除多余的空白字符
+	text = strings.TrimSpace(text)
+
+	// 首先尝试使用tiktoken进行精确计算
+	if tokens := r.calculateTokensWithTiktoken(text, model); tokens > 0 {
+		log.Printf("Using tiktoken for model %s: %d tokens for %d characters", model, tokens, len([]rune(text)))
+		return tokens
+	}
+
+	// 如果tiktoken失败，使用备用估算方法
+	log.Printf("Tiktoken failed for model %s, using fallback estimation method", model)
+	return r.estimateTokensWithFallback(text)
+}
+
+// estimateTokensFromRequestAndResponse 基于请求和响应内容综合估算token数量（兼容性方法）
+func (r *RequestLogger) estimateTokensFromRequestAndResponse(requestBody, responseBody string) int {
+	return r.estimateTokensFromRequestAndResponseWithModel(requestBody, responseBody, "gpt-3.5-turbo")
+}
+
+// estimateTokensFromRequestAndResponseWithModel 基于请求和响应内容综合估算token数量（支持指定模型）
+func (r *RequestLogger) estimateTokensFromRequestAndResponseWithModel(requestBody, responseBody, model string) int {
+	var totalTokens int
+
+	// 估算请求中的token数（输入token）
+	inputTokens := 0
+	if requestBody != "" {
+		inputTokens = r.estimateTokensFromRequestWithModel(requestBody, model)
+		totalTokens += inputTokens
+		log.Printf("Estimated input tokens for model %s: %d", model, inputTokens)
+	}
+
+	// 估算响应中的token数（输出token）
+	outputTokens := 0
+	if responseBody != "" {
+		outputTokens = r.estimateTokensFromResponseWithModel(responseBody, model)
+		totalTokens += outputTokens
+		log.Printf("Estimated output tokens for model %s: %d", model, outputTokens)
+	}
+
+	// 添加系统开销估算（通常占总token的5-10%）
+	systemOverhead := int(float64(totalTokens) * 0.1)
+	totalTokens += systemOverhead
+
+	log.Printf("Token estimation breakdown for model %s: input=%d, output=%d, overhead=%d, total=%d",
+		model, inputTokens, outputTokens, systemOverhead, totalTokens)
+
+	return totalTokens
+}
+
+// estimateTokensFromRequest 从请求体中估算输入token数量（兼容性方法）
+func (r *RequestLogger) estimateTokensFromRequest(requestBody string) int {
+	return r.estimateTokensFromRequestWithModel(requestBody, "gpt-3.5-turbo")
+}
+
+// estimateTokensFromRequestWithModel 从请求体中估算输入token数量（支持指定模型）
+func (r *RequestLogger) estimateTokensFromRequestWithModel(requestBody, model string) int {
+	if requestBody == "" {
+		return 0
+	}
+
+	var totalText strings.Builder
+
+	// 解析请求JSON，提取messages中的内容
+	var request map[string]interface{}
+	if err := json.Unmarshal([]byte(requestBody), &request); err == nil {
+		if messages, ok := request["messages"].([]interface{}); ok {
+			for _, message := range messages {
+				if msgMap, ok := message.(map[string]interface{}); ok {
+					// 提取content字段
+					if content, ok := msgMap["content"].(string); ok {
+						totalText.WriteString(content)
+						totalText.WriteString(" ") // 添加分隔符
+					}
+					// 处理content为数组的情况（多模态内容）
+					if contentArray, ok := msgMap["content"].([]interface{}); ok {
+						for _, contentItem := range contentArray {
+							if contentMap, ok := contentItem.(map[string]interface{}); ok {
+								if text, ok := contentMap["text"].(string); ok {
+									totalText.WriteString(text)
+									totalText.WriteString(" ")
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// 也考虑系统提示词等其他字段
+		if systemPrompt, ok := request["system"].(string); ok {
+			totalText.WriteString(systemPrompt)
+			totalText.WriteString(" ")
+		}
+	}
+
+	text := strings.TrimSpace(totalText.String())
+	if text == "" {
+		return 0
+	}
+
+	inputTokens := r.estimateTokensFromTextWithModel(text, model)
+	log.Printf("Request text length: %d characters, estimated input tokens for model %s: %d", len([]rune(text)), model, inputTokens)
+	return inputTokens
+}
+
+// estimateTokensFromText 基于文本内容估算token数量
+func (r *RequestLogger) estimateTokensFromText(text string) int {
+	if text == "" {
+		return 0
+	}
+
+	// 移除多余的空白字符
+	text = strings.TrimSpace(text)
+
+	// 首先尝试使用tiktoken进行精确计算
+	if tokens := r.calculateTokensWithTiktoken(text, "gpt-3.5-turbo"); tokens > 0 {
+		log.Printf("Using tiktoken for accurate token count: %d tokens for %d characters", tokens, len([]rune(text)))
+		return tokens
+	}
+
+	// 如果tiktoken失败，使用备用估算方法
+	log.Printf("Tiktoken failed, using fallback estimation method")
+	return r.estimateTokensWithFallback(text)
+}
+
+// calculateTokensWithTiktoken 使用tiktoken库进行精确的token计算
+func (r *RequestLogger) calculateTokensWithTiktoken(text, model string) int {
+	if text == "" {
+		return 0
+	}
+
+	// 尝试获取指定模型的编码器
+	enc, err := tiktoken.EncodingForModel(model)
+	if err != nil {
+		// 如果指定模型失败，尝试使用通用编码器
+		enc, err = tiktoken.GetEncoding("cl100k_base") // GPT-4和GPT-3.5-turbo使用的编码
+		if err != nil {
+			log.Printf("Failed to get tiktoken encoding: %v", err)
+			return 0
+		}
+	}
+
+	// 编码文本并计算token数
+	tokens := enc.Encode(text, nil, nil)
+	return len(tokens)
+}
+
+// estimateTokensWithFallback 备用的token估算方法
+func (r *RequestLogger) estimateTokensWithFallback(text string) int {
+	if text == "" {
+		return 0
+	}
+
+	// 改进的token估算规则：
+	// 1. 中文字符：每个字符约等于1个token（更准确的估算）
+	// 2. 英文单词：平均每个单词约1.3个token
+	// 3. 数字和标点：按字符数/4计算
+
+	var tokenCount float64
+
+	// 统计中文字符数
+	chineseCount := 0
+	englishWordCount := 0
+	otherCharCount := 0
+
+	// 分析文本内容
+	runes := []rune(text)
+	inWord := false
+
+	for _, r := range runes {
+		if r >= 0x4e00 && r <= 0x9fff {
+			// 中文字符
+			chineseCount++
+			inWord = false
+		} else if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			// 英文字母
+			if !inWord {
+				englishWordCount++
+				inWord = true
+			}
+		} else {
+			// 其他字符（数字、标点、空格等）
+			otherCharCount++
+			inWord = false
+		}
+	}
+
+	// 估算token数
+	// 中文字符：每个字符约1个token
+	tokenCount += float64(chineseCount) * 1.0
+
+	// 英文单词：每个单词约1.3个token
+	tokenCount += float64(englishWordCount) * 1.3
+
+	// 其他字符：每4个字符约1个token
+	tokenCount += float64(otherCharCount) / 4.0
+
+	// 确保至少返回1个token（如果有内容的话）
+	if tokenCount < 1 && len(runes) > 0 {
+		tokenCount = 1
+	}
+
+	result := int(tokenCount + 0.5) // 四舍五入
+
+	// 调试信息
+	log.Printf("Fallback token estimation: %d Chinese chars, %d English words, %d other chars -> %d tokens",
+		chineseCount, englishWordCount, otherCharCount, result)
+
+	return result
 }
 
 // min 返回两个整数中的较小值

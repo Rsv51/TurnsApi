@@ -4,23 +4,17 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"turnsapi/internal"
 	"turnsapi/internal/providers"
+	"turnsapi/internal/proxykey"
 )
-
-// GroupFailureInfo 分组失败信息
-type GroupFailureInfo struct {
-	FailureCount int
-	LastFailure  time.Time
-}
 
 // ProviderRouter 提供商路由器
 type ProviderRouter struct {
 	config          *internal.Config
 	providerManager *providers.ProviderManager
-	failureTracker  map[string]map[string]*GroupFailureInfo // model -> groupID -> failure info
+	proxyKeyManager *proxykey.Manager
 	mutex           sync.RWMutex
 }
 
@@ -29,7 +23,15 @@ func NewProviderRouter(config *internal.Config, providerManager *providers.Provi
 	return &ProviderRouter{
 		config:          config,
 		providerManager: providerManager,
-		failureTracker:  make(map[string]map[string]*GroupFailureInfo),
+	}
+}
+
+// NewProviderRouterWithProxyKey 创建带代理密钥管理器的提供商路由器
+func NewProviderRouterWithProxyKey(config *internal.Config, providerManager *providers.ProviderManager, proxyKeyManager *proxykey.Manager) *ProviderRouter {
+	return &ProviderRouter{
+		config:          config,
+		providerManager: providerManager,
+		proxyKeyManager: proxyKeyManager,
 	}
 }
 
@@ -38,6 +40,7 @@ type RouteRequest struct {
 	Model             string   `json:"model"`
 	ProviderGroup     string   `json:"provider_group,omitempty"`     // 可选的显式提供商分组
 	AllowedGroups     []string `json:"allowed_groups,omitempty"`     // 代理密钥允许访问的分组
+	ProxyKeyID        string   `json:"proxy_key_id,omitempty"`       // 代理密钥ID，用于分组选择
 	ForceProviderType string   `json:"force_provider_type,omitempty"` // 强制指定提供商类型
 }
 
@@ -73,9 +76,30 @@ func (pr *ProviderRouter) Route(req *RouteRequest) (*RouteResult, error) {
 		groupID = req.ProviderGroup
 	} else {
 		// 2. 根据模型名称和代理密钥权限自动路由
-		group, groupID = pr.routeByModelWithPermissions(req.Model, req.AllowedGroups)
-		if group == nil {
-			return nil, fmt.Errorf("no suitable provider group found for model '%s' with current permissions", req.Model)
+		if req.ProxyKeyID != "" && pr.proxyKeyManager != nil {
+			// 使用代理密钥的分组选择策略
+			selectedGroupID, err := pr.proxyKeyManager.SelectGroupForKey(req.ProxyKeyID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to select group for proxy key: %w", err)
+			}
+
+			// 验证选择的分组是否存在且启用
+			selectedGroup, exists := pr.config.GetGroupByID(selectedGroupID)
+			if !exists {
+				return nil, fmt.Errorf("selected group '%s' not found", selectedGroupID)
+			}
+			if !selectedGroup.Enabled {
+				return nil, fmt.Errorf("selected group '%s' is disabled", selectedGroupID)
+			}
+
+			group = selectedGroup
+			groupID = selectedGroupID
+		} else {
+			// 传统的模型匹配路由
+			group, groupID = pr.routeByModelWithPermissions(req.Model, req.AllowedGroups)
+			if group == nil {
+				return nil, fmt.Errorf("no suitable provider group found for model '%s' with current permissions", req.Model)
+			}
 		}
 	}
 
@@ -339,49 +363,10 @@ func (pr *ProviderRouter) GetModelAliases(groupID string) []string {
 	return []string{}
 }
 
-// sortGroupsByFailureCount 按失败次数对分组进行排序
+// sortGroupsByFailureCount 按失败次数对分组进行排序（已移除失败跟踪，现在只返回原始顺序）
 func (pr *ProviderRouter) sortGroupsByFailureCount(modelName string, groups []string) []string {
-	if len(groups) <= 1 {
-		return groups
-	}
-
-	// 获取每个分组的失败次数
-	type groupScore struct {
-		groupID      string
-		failureCount int
-		lastFailure  time.Time
-	}
-
-	var scores []groupScore
-	modelFailures, exists := pr.failureTracker[modelName]
-
-	for _, groupID := range groups {
-		score := groupScore{groupID: groupID}
-		if exists {
-			if info, hasFailure := modelFailures[groupID]; hasFailure {
-				score.failureCount = info.FailureCount
-				score.lastFailure = info.LastFailure
-			}
-		}
-		scores = append(scores, score)
-	}
-
-	// 简单排序：失败次数少的优先，失败次数相同的按最后失败时间排序
-	for i := 0; i < len(scores)-1; i++ {
-		for j := i + 1; j < len(scores); j++ {
-			if scores[i].failureCount > scores[j].failureCount ||
-				(scores[i].failureCount == scores[j].failureCount && scores[i].lastFailure.After(scores[j].lastFailure)) {
-				scores[i], scores[j] = scores[j], scores[i]
-			}
-		}
-	}
-
-	result := make([]string, len(scores))
-	for i, score := range scores {
-		result[i] = score.groupID
-	}
-
-	return result
+	// 不再进行失败次数排序，直接返回原始分组顺序
+	return groups
 }
 
 // RouteWithRetry 智能路由，支持失败重试
@@ -429,11 +414,6 @@ func (pr *ProviderRouter) RouteWithRetry(req *RouteRequest) (*RouteResult, error
 
 	// 尝试每个候选分组
 	for _, groupID := range candidateGroups {
-		// 检查该分组是否已经失败太多次
-		if pr.isGroupTemporarilyBlocked(req.Model, groupID) {
-			continue
-		}
-
 		group := pr.config.UserGroups[groupID]
 
 		// 创建提供商配置
@@ -456,71 +436,10 @@ func (pr *ProviderRouter) RouteWithRetry(req *RouteRequest) (*RouteResult, error
 		}, nil
 	}
 
-	return nil, fmt.Errorf("all suitable provider groups are temporarily unavailable for model '%s'", req.Model)
+	return nil, fmt.Errorf("no suitable provider group found for model '%s'", req.Model)
 }
 
-// isGroupTemporarilyBlocked 检查分组是否因失败次数过多而被临时阻止
-func (pr *ProviderRouter) isGroupTemporarilyBlocked(modelName, groupID string) bool {
-	pr.mutex.RLock()
-	defer pr.mutex.RUnlock()
 
-	modelFailures, exists := pr.failureTracker[modelName]
-	if !exists {
-		return false
-	}
-
-	info, hasFailure := modelFailures[groupID]
-	if !hasFailure {
-		return false
-	}
-
-	// 如果失败次数达到3次，则临时阻止（可以配置）
-	const maxFailures = 3
-	const blockDuration = 5 * time.Minute // 阻止5分钟
-
-	if info.FailureCount >= maxFailures {
-		// 检查是否已经过了阻止时间
-		if time.Since(info.LastFailure) < blockDuration {
-			return true
-		} else {
-			// 重置失败计数
-			info.FailureCount = 0
-		}
-	}
-
-	return false
-}
-
-// ReportFailure 报告分组失败
-func (pr *ProviderRouter) ReportFailure(modelName, groupID string) {
-	pr.mutex.Lock()
-	defer pr.mutex.Unlock()
-
-	if pr.failureTracker[modelName] == nil {
-		pr.failureTracker[modelName] = make(map[string]*GroupFailureInfo)
-	}
-
-	if pr.failureTracker[modelName][groupID] == nil {
-		pr.failureTracker[modelName][groupID] = &GroupFailureInfo{}
-	}
-
-	info := pr.failureTracker[modelName][groupID]
-	info.FailureCount++
-	info.LastFailure = time.Now()
-}
-
-// ReportSuccess 报告分组成功
-func (pr *ProviderRouter) ReportSuccess(modelName, groupID string) {
-	pr.mutex.Lock()
-	defer pr.mutex.Unlock()
-
-	if pr.failureTracker[modelName] != nil {
-		if info, exists := pr.failureTracker[modelName][groupID]; exists {
-			// 成功后重置失败计数
-			info.FailureCount = 0
-		}
-	}
-}
 
 // GetAvailableGroups 获取所有可用的分组
 func (pr *ProviderRouter) GetAvailableGroups() map[string]*internal.UserGroup {

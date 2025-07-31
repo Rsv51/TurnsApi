@@ -3,6 +3,7 @@ package proxykey
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -11,43 +12,84 @@ import (
 	"turnsapi/internal/logger"
 )
 
+// GroupSelectionStrategy 分组选择策略
+type GroupSelectionStrategy string
+
+const (
+	GroupSelectionRoundRobin GroupSelectionStrategy = "round_robin" // 分组间轮询
+	GroupSelectionWeighted   GroupSelectionStrategy = "weighted"    // 按权重选择分组
+	GroupSelectionRandom     GroupSelectionStrategy = "random"      // 随机选择分组
+	GroupSelectionFailover   GroupSelectionStrategy = "failover"    // 故障转移（优先级顺序）
+)
+
+// GroupWeight 分组权重配置
+type GroupWeight struct {
+	GroupID string `json:"group_id"` // 分组ID
+	Weight  int    `json:"weight"`   // 权重值，越大优先级越高
+}
+
+// GroupSelectionConfig 分组选择配置
+type GroupSelectionConfig struct {
+	Strategy     GroupSelectionStrategy `json:"strategy"`      // 选择策略
+	GroupWeights []GroupWeight          `json:"group_weights"` // 分组权重配置（仅在weighted策略下使用）
+}
+
 // ProxyKey 代理服务API密钥
 type ProxyKey struct {
-	ID            string    `json:"id"`
-	Key           string    `json:"key"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	AllowedGroups []string  `json:"allowed_groups"` // 允许访问的分组ID列表
-	CreatedAt     time.Time `json:"created_at"`
-	LastUsed      time.Time `json:"last_used"`
-	UsageCount    int64     `json:"usage_count"`
-	IsActive      bool      `json:"is_active"`
+	ID                   string                `json:"id"`
+	Key                  string                `json:"key"`
+	Name                 string                `json:"name"`
+	Description          string                `json:"description"`
+	AllowedGroups        []string              `json:"allowed_groups"`         // 允许访问的分组ID列表
+	GroupSelectionConfig *GroupSelectionConfig `json:"group_selection_config"` // 分组间请求设置
+	CreatedAt            time.Time             `json:"created_at"`
+	LastUsed             time.Time             `json:"last_used"`
+	UsageCount           int64                 `json:"usage_count"`
+	IsActive             bool                  `json:"is_active"`
+}
+
+// ConfigProvider 配置提供者接口
+type ConfigProvider interface {
+	GetEnabledGroups() map[string]interface{} // 返回启用的分组ID列表
 }
 
 // Manager 代理密钥管理器
 type Manager struct {
-	keys          map[string]*ProxyKey
-	requestLogger *logger.RequestLogger
-	mu            sync.RWMutex
+	keys           map[string]*ProxyKey
+	groupSelectors map[string]*GroupSelector // 每个代理密钥的分组选择器
+	requestLogger  *logger.RequestLogger
+	configProvider ConfigProvider            // 配置提供者，用于获取启用的分组
+	mu             sync.RWMutex
 }
 
 // NewManager 创建新的代理密钥管理器
 func NewManager() *Manager {
 	return &Manager{
-		keys: make(map[string]*ProxyKey),
+		keys:           make(map[string]*ProxyKey),
+		groupSelectors: make(map[string]*GroupSelector),
 	}
 }
 
 // NewManagerWithDB 创建带数据库支持的代理密钥管理器
 func NewManagerWithDB(requestLogger *logger.RequestLogger) *Manager {
+	return NewManagerWithConfig(requestLogger, nil)
+}
+
+// NewManagerWithConfig 创建带配置提供者的代理密钥管理器
+func NewManagerWithConfig(requestLogger *logger.RequestLogger, configProvider ConfigProvider) *Manager {
 	m := &Manager{
-		keys:          make(map[string]*ProxyKey),
-		requestLogger: requestLogger,
+		keys:           make(map[string]*ProxyKey),
+		groupSelectors: make(map[string]*GroupSelector),
+		requestLogger:  requestLogger,
+		configProvider: configProvider,
 	}
 
 	// 从数据库加载现有密钥
+	log.Println("Attempting to load proxy keys from database...")
 	if err := m.loadKeysFromDB(); err != nil {
-		log.Printf("Failed to load proxy keys from database: %v", err)
+		log.Printf("ERROR: Failed to load proxy keys from database: %v", err)
+	} else {
+		log.Println("Database loading process completed")
 	}
 
 	return m
@@ -56,12 +98,22 @@ func NewManagerWithDB(requestLogger *logger.RequestLogger) *Manager {
 // loadKeysFromDB 从数据库加载代理密钥
 func (m *Manager) loadKeysFromDB() error {
 	if m.requestLogger == nil {
+		log.Println("Warning: requestLogger is nil, skipping proxy key loading")
 		return nil
 	}
 
+	log.Println("Loading proxy keys from database...")
 	dbKeys, err := m.requestLogger.GetAllProxyKeys()
 	if err != nil {
+		log.Printf("ERROR: Database query failed: %v", err)
 		return fmt.Errorf("failed to get proxy keys from database: %w", err)
+	}
+
+	log.Printf("Found %d proxy keys in database", len(dbKeys))
+
+	if len(dbKeys) == 0 {
+		log.Println("WARNING: No proxy keys found in database - this might be the root cause")
+		return nil
 	}
 
 	m.mu.Lock()
@@ -79,19 +131,63 @@ func (m *Manager) loadKeysFromDB() error {
 			IsActive:      dbKey.IsActive,
 		}
 
+		// 解析分组选择配置
+		if dbKey.GroupSelectionConfig != "" {
+			var config GroupSelectionConfig
+			if err := json.Unmarshal([]byte(dbKey.GroupSelectionConfig), &config); err != nil {
+				log.Printf("Warning: Failed to parse GroupSelectionConfig for key %s: %v", dbKey.ID, err)
+				log.Printf("Raw GroupSelectionConfig: %s", dbKey.GroupSelectionConfig)
+			} else {
+				key.GroupSelectionConfig = &config
+			}
+		}
+
 		if dbKey.LastUsedAt != nil {
 			key.LastUsed = *dbKey.LastUsedAt
 		}
 
 		m.keys[key.ID] = key
+		log.Printf("Loaded proxy key: %s (%s)", key.Name, key.ID)
+
+		// 初始化分组选择器（如果需要）
+		needsSelector := false
+		var selectorGroups []string
+
+		if len(key.AllowedGroups) == 0 {
+			// 空分组列表，使用所有启用的分组
+			if m.configProvider != nil {
+				enabledGroups := m.configProvider.GetEnabledGroups()
+				if len(enabledGroups) > 1 {
+					needsSelector = true
+					for groupID := range enabledGroups {
+						selectorGroups = append(selectorGroups, groupID)
+					}
+				}
+			}
+		} else if len(key.AllowedGroups) > 1 {
+			// 多个指定分组
+			needsSelector = true
+			selectorGroups = key.AllowedGroups
+		}
+
+		if needsSelector && len(selectorGroups) > 1 {
+			m.groupSelectors[key.ID] = NewGroupSelector(selectorGroups, key.GroupSelectionConfig)
+		}
 	}
 
-	log.Printf("Loaded %d proxy keys from database", len(dbKeys))
+	log.Printf("Successfully loaded %d proxy keys from database", len(m.keys))
 	return nil
 }
 
+
+
 // GenerateKey 生成新的代理API密钥
 func (m *Manager) GenerateKey(name, description string, allowedGroups []string) (*ProxyKey, error) {
+	return m.GenerateKeyWithConfig(name, description, allowedGroups, nil)
+}
+
+// GenerateKeyWithConfig 生成带分组选择配置的代理API密钥
+func (m *Manager) GenerateKeyWithConfig(name, description string, allowedGroups []string, groupSelectionConfig *GroupSelectionConfig) (*ProxyKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -105,27 +201,59 @@ func (m *Manager) GenerateKey(name, description string, allowedGroups []string) 
 	id := generateID()
 	now := time.Now()
 
+	// 确定是否需要分组选择配置
+	needsGroupSelection := false
+	if len(allowedGroups) == 0 {
+		// 空分组列表表示可以访问所有分组
+		if m.configProvider != nil {
+			enabledGroups := m.configProvider.GetEnabledGroups()
+			if len(enabledGroups) > 1 {
+				needsGroupSelection = true
+			}
+		}
+	} else if len(allowedGroups) > 1 {
+		// 多个指定分组
+		needsGroupSelection = true
+	}
+
+	// 如果需要分组选择但没有指定配置，使用默认的轮询策略
+	if needsGroupSelection && groupSelectionConfig == nil {
+		groupSelectionConfig = &GroupSelectionConfig{
+			Strategy: GroupSelectionRoundRobin,
+		}
+	}
+
 	key := &ProxyKey{
-		ID:            id,
-		Key:           keyStr,
-		Name:          name,
-		Description:   description,
-		AllowedGroups: allowedGroups,
-		CreatedAt:     now,
-		IsActive:      true,
+		ID:                   id,
+		Key:                  keyStr,
+		Name:                 name,
+		Description:          description,
+		AllowedGroups:        allowedGroups,
+		GroupSelectionConfig: groupSelectionConfig,
+		CreatedAt:            now,
+		IsActive:             true,
 	}
 
 	// 保存到数据库
 	if m.requestLogger != nil {
+		// 序列化分组选择配置
+		var groupSelectionConfigJSON string
+		if groupSelectionConfig != nil {
+			if configBytes, err := json.Marshal(groupSelectionConfig); err == nil {
+				groupSelectionConfigJSON = string(configBytes)
+			}
+		}
+
 		dbKey := &logger.ProxyKey{
-			ID:            id,
-			Name:          name,
-			Description:   description,
-			Key:           keyStr,
-			AllowedGroups: allowedGroups,
-			IsActive:      true,
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			ID:                   id,
+			Name:                 name,
+			Description:          description,
+			Key:                  keyStr,
+			AllowedGroups:        allowedGroups,
+			GroupSelectionConfig: groupSelectionConfigJSON,
+			IsActive:             true,
+			CreatedAt:            now,
+			UpdatedAt:            now,
 		}
 
 		if err := m.requestLogger.InsertProxyKey(dbKey); err != nil {
@@ -134,6 +262,27 @@ func (m *Manager) GenerateKey(name, description string, allowedGroups []string) 
 	}
 
 	m.keys[id] = key
+
+	// 初始化分组选择器（如果需要）
+	if needsGroupSelection {
+		var selectorGroups []string
+		if len(allowedGroups) == 0 {
+			// 空分组列表，使用所有启用的分组
+			if m.configProvider != nil {
+				enabledGroups := m.configProvider.GetEnabledGroups()
+				for groupID := range enabledGroups {
+					selectorGroups = append(selectorGroups, groupID)
+				}
+			}
+		} else {
+			// 使用指定的分组
+			selectorGroups = allowedGroups
+		}
+
+		if len(selectorGroups) > 1 {
+			m.groupSelectors[id] = NewGroupSelector(selectorGroups, groupSelectionConfig)
+		}
+	}
 	return key, nil
 }
 
@@ -232,6 +381,11 @@ func (m *Manager) GetAllKeys() []*ProxyKey {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	log.Printf("GetAllKeys called: found %d keys in memory", len(m.keys))
+	for id, key := range m.keys {
+		log.Printf("  - Key ID: %s, Name: %s, Active: %t", id, key.Name, key.IsActive)
+	}
+
 	keys := make([]*ProxyKey, 0, len(m.keys))
 	for _, key := range m.keys {
 		keys = append(keys, key)
@@ -261,6 +415,11 @@ func (m *Manager) DeleteKey(id string) error {
 
 // UpdateKey 更新代理密钥信息
 func (m *Manager) UpdateKey(id string, name, description string, isActive bool, allowedGroups []string) error {
+	return m.UpdateKeyWithConfig(id, name, description, isActive, allowedGroups, nil)
+}
+
+// UpdateKeyWithConfig 更新带分组选择配置的代理密钥信息
+func (m *Manager) UpdateKeyWithConfig(id string, name, description string, isActive bool, allowedGroups []string, groupSelectionConfig *GroupSelectionConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -269,23 +428,42 @@ func (m *Manager) UpdateKey(id string, name, description string, isActive bool, 
 		return fmt.Errorf("key not found")
 	}
 
+	// 如果有多个允许分组但没有指定分组选择配置，保持现有配置或使用默认轮询策略
+	if len(allowedGroups) > 1 && groupSelectionConfig == nil && key.GroupSelectionConfig == nil {
+		groupSelectionConfig = &GroupSelectionConfig{
+			Strategy: GroupSelectionRoundRobin,
+		}
+	}
+
 	// 更新内存中的密钥信息
 	key.Name = name
 	key.Description = description
 	key.IsActive = isActive
 	key.AllowedGroups = allowedGroups
+	if groupSelectionConfig != nil {
+		key.GroupSelectionConfig = groupSelectionConfig
+	}
 
 	// 更新数据库中的密钥信息
 	if m.requestLogger != nil {
+		// 序列化分组选择配置
+		var groupSelectionConfigJSON string
+		if key.GroupSelectionConfig != nil {
+			if configBytes, err := json.Marshal(key.GroupSelectionConfig); err == nil {
+				groupSelectionConfigJSON = string(configBytes)
+			}
+		}
+
 		dbKey := &logger.ProxyKey{
-			ID:            key.ID,
-			Name:          name,
-			Description:   description,
-			Key:           key.Key,
-			AllowedGroups: allowedGroups,
-			IsActive:      isActive,
-			CreatedAt:     key.CreatedAt,
-			UpdatedAt:     time.Now(),
+			ID:                   key.ID,
+			Name:                 name,
+			Description:          description,
+			Key:                  key.Key,
+			AllowedGroups:        allowedGroups,
+			GroupSelectionConfig: groupSelectionConfigJSON,
+			IsActive:             isActive,
+			CreatedAt:            key.CreatedAt,
+			UpdatedAt:            time.Now(),
 		}
 
 		if err := m.requestLogger.UpdateProxyKey(dbKey); err != nil {
@@ -293,7 +471,100 @@ func (m *Manager) UpdateKey(id string, name, description string, isActive bool, 
 		}
 	}
 
+	// 更新分组选择器
+	needsSelector := false
+	var selectorGroups []string
+
+	if len(allowedGroups) == 0 {
+		// 空分组列表，使用所有启用的分组
+		if m.configProvider != nil {
+			enabledGroups := m.configProvider.GetEnabledGroups()
+			if len(enabledGroups) > 1 {
+				needsSelector = true
+				for groupID := range enabledGroups {
+					selectorGroups = append(selectorGroups, groupID)
+				}
+			}
+		}
+	} else if len(allowedGroups) > 1 {
+		// 多个指定分组
+		needsSelector = true
+		selectorGroups = allowedGroups
+	}
+
+	if needsSelector && len(selectorGroups) > 1 {
+		if selector, exists := m.groupSelectors[id]; exists {
+			selector.UpdateAllowedGroups(selectorGroups)
+			if groupSelectionConfig != nil {
+				selector.UpdateConfig(groupSelectionConfig)
+			}
+		} else {
+			m.groupSelectors[id] = NewGroupSelector(selectorGroups, key.GroupSelectionConfig)
+		}
+	} else {
+		// 如果不需要分组选择器，删除现有的
+		delete(m.groupSelectors, id)
+	}
+
+	log.Printf("Successfully loaded %d proxy keys from database", len(m.keys))
 	return nil
+}
+
+// SelectGroupForKey 为指定的代理密钥选择分组
+func (m *Manager) SelectGroupForKey(keyID string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	key, exists := m.keys[keyID]
+	if !exists {
+		return "", fmt.Errorf("key not found")
+	}
+
+	if !key.IsActive {
+		return "", fmt.Errorf("key is not active")
+	}
+
+	// 处理空分组列表（表示可以访问所有分组）
+	if len(key.AllowedGroups) == 0 {
+		// 使用分组选择器选择分组
+		if selector, exists := m.groupSelectors[keyID]; exists {
+			return selector.SelectGroup()
+		}
+
+		// 如果没有分组选择器，从所有启用的分组中选择第一个
+		if m.configProvider != nil {
+			enabledGroups := m.configProvider.GetEnabledGroups()
+			for groupID := range enabledGroups {
+				return groupID, nil // 返回第一个找到的分组
+			}
+		}
+
+		return "", fmt.Errorf("no enabled groups available")
+	}
+
+	if len(key.AllowedGroups) == 1 {
+		return key.AllowedGroups[0], nil
+	}
+
+	// 使用分组选择器选择分组
+	if selector, exists := m.groupSelectors[keyID]; exists {
+		return selector.SelectGroup()
+	}
+
+	// 如果没有分组选择器，返回第一个分组
+	return key.AllowedGroups[0], nil
+}
+
+// GetGroupUsageStats 获取代理密钥的分组使用统计
+func (m *Manager) GetGroupUsageStats(keyID string) (map[string]GroupUsageStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if selector, exists := m.groupSelectors[keyID]; exists {
+		return selector.GetUsageStats(), nil
+	}
+
+	return nil, fmt.Errorf("no group selector found for key")
 }
 
 // generateID 生成唯一ID

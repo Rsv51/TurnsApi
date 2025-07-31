@@ -124,12 +124,12 @@
                 <!-- 请求状态分布饼图 -->
                 <div class="bg-gray-50 rounded-lg p-4">
                     <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">请求状态分布</h3>
-                    <div id="statusChart" class="flex justify-center min-h-[250px]"></div>
+                    <div id="statusChart" class="flex justify-center items-center min-h-[250px]"></div>
                 </div>
                 <!-- 模型使用统计柱状图 -->
                 <div class="bg-gray-50 rounded-lg p-4">
                     <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">模型使用统计</h3>
-                    <div id="modelChart" class="min-h-[250px]"></div>
+                    <div id="modelChart" class="min-h-[250px] flex justify-center items-center"></div>
                 </div>
             </div>
 
@@ -138,12 +138,12 @@
                 <!-- Token使用趋势图 -->
                 <div class="bg-gray-50 rounded-lg p-4">
                     <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">Token使用趋势</h3>
-                    <div id="tokenTrendChart" class="min-h-[250px]"></div>
+                    <div id="tokenTrendChart" class="min-h-[250px] flex justify-center items-center"></div>
                 </div>
-                <!-- 响应时间分布图 -->
+                <!-- 各分组Token数统计 -->
                 <div class="bg-gray-50 rounded-lg p-4">
-                    <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">响应时间分布</h3>
-                    <div id="responseTimeChart" class="min-h-[250px]"></div>
+                    <h3 class="text-lg font-semibold mb-4 text-center text-gray-700">各分组Token数统计</h3>
+                    <div id="groupTokenChart" class="min-h-[250px] flex justify-center items-center"></div>
                 </div>
             </div>
         </div>
@@ -284,7 +284,16 @@
                                           x-text="log.is_stream ? '流式' : '普通'"></span>
                                 </td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.duration + 'ms'"></td>
-                                <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.tokens_used || '-'"></td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    <div class="flex items-center space-x-1">
+                                        <span x-text="log.tokens_used || '-'"></span>
+                                        <span x-show="log.tokens_estimated"
+                                              class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"
+                                              title="使用备用估算方法计算的Token数">
+                                            估算
+                                        </span>
+                                    </div>
+                                </td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900" x-text="log.client_ip || '-'"></td>
                                 <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
                                     <button @click="viewLogDetail(log.id)" class="text-indigo-600 hover:text-indigo-900">查看详情</button>
@@ -370,7 +379,14 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700">Token使用量</label>
-                                <p class="mt-1 text-sm text-gray-900" x-text="logDetail ? (logDetail.tokens_used || '未知') : ''"></p>
+                                <div class="mt-1 flex items-center space-x-2">
+                                    <p class="text-sm text-gray-900" x-text="logDetail ? (logDetail.tokens_used || '未知') : ''"></p>
+                                    <span x-show="logDetail && logDetail.tokens_estimated"
+                                          class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"
+                                          title="使用备用估算方法计算的Token数">
+                                        备用估算
+                                    </span>
+                                </div>
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700">客户端IP</label>
@@ -786,7 +802,7 @@
                     this.createStatusChart();
                     this.createModelChart();
                     this.createTokenTrendChart();
-                    this.createResponseTimeChart();
+                    this.createGroupTokenChart();
                 },
 
                 // 更新图表
@@ -794,7 +810,7 @@
                     this.createStatusChart();
                     this.createModelChart();
                     this.createTokenTrendChart();
-                    this.createResponseTimeChart();
+                    this.createGroupTokenChart();
                 },
 
                 // 创建状态分布饼图
@@ -819,17 +835,19 @@
                         return;
                     }
 
-                    const containerWidth = 350;
-                    const containerHeight = 200;
+                    const containerWidth = 400;
+                    const containerHeight = 250;
                     const radius = 70;
 
                     const svg = container.append("svg")
                         .attr("width", containerWidth)
                         .attr("height", containerHeight)
-                        .style("overflow", "visible");
+                        .style("overflow", "visible")
+                        .style("margin", "0 auto")
+                        .style("display", "block");
 
                     const g = svg.append("g")
-                        .attr("transform", `translate(${radius + 20},${containerHeight/2})`);
+                        .attr("transform", `translate(${radius + 30},${containerHeight/2})`);
 
                     const pie = d3.pie()
                         .value(d => d.value)
@@ -876,7 +894,7 @@
 
                     // 添加图例
                     const legend = svg.append("g")
-                        .attr("transform", `translate(${radius * 2 + 50}, 30)`);
+                        .attr("transform", `translate(${radius * 2 + 70}, 30)`);
 
                     data.forEach((d, i) => {
                         const legendRow = legend.append("g")
@@ -950,13 +968,15 @@
                     }
 
                     const margin = { top: 20, right: 20, bottom: 70, left: 50 };
-                    const width = 320 - margin.left - margin.right;
-                    const height = 200 - margin.top - margin.bottom;
+                    const width = 350 - margin.left - margin.right;
+                    const height = 220 - margin.top - margin.bottom;
 
                     const svg = container.append("svg")
                         .attr("width", width + margin.left + margin.right)
                         .attr("height", height + margin.top + margin.bottom)
-                        .style("overflow", "visible");
+                        .style("overflow", "visible")
+                        .style("margin", "0 auto")
+                        .style("display", "block");
 
                     const g = svg.append("g")
                         .attr("transform", `translate(${margin.left},${margin.top})`);
@@ -1084,13 +1104,15 @@
                     }
 
                     const margin = { top: 20, right: 20, bottom: 50, left: 60 };
-                    const width = 320 - margin.left - margin.right;
-                    const height = 200 - margin.top - margin.bottom;
+                    const width = 350 - margin.left - margin.right;
+                    const height = 220 - margin.top - margin.bottom;
 
                     const svg = container.append("svg")
                         .attr("width", width + margin.left + margin.right)
                         .attr("height", height + margin.top + margin.bottom)
-                        .style("overflow", "visible");
+                        .style("overflow", "visible")
+                        .style("margin", "0 auto")
+                        .style("display", "block");
 
                     const g = svg.append("g")
                         .attr("transform", `translate(${margin.left},${margin.top})`);
@@ -1223,28 +1245,28 @@
                         .style("fill", "#6B7280");
                 },
 
-                // 创建响应时间分布图
-                createResponseTimeChart() {
-                    const container = d3.select("#responseTimeChart");
+                // 创建各分组Token数统计图
+                createGroupTokenChart() {
+                    const container = d3.select("#groupTokenChart");
                     container.selectAll("*").remove();
 
-                    // 统计响应时间分布
-                    const timeRanges = [
-                        { label: "0-1s", min: 0, max: 1000, count: 0, color: "#10B981" },
-                        { label: "1-3s", min: 1000, max: 3000, count: 0, color: "#3B82F6" },
-                        { label: "3-5s", min: 3000, max: 5000, count: 0, color: "#F59E0B" },
-                        { label: "5-10s", min: 5000, max: 10000, count: 0, color: "#EF4444" },
-                        { label: ">10s", min: 10000, max: Infinity, count: 0, color: "#8B5CF6" }
-                    ];
-
+                    // 统计各分组的Token使用情况
+                    const groupTokens = {};
                     this.logs.forEach(log => {
-                        if (log.duration && log.duration > 0) {
-                            const range = timeRanges.find(r => log.duration >= r.min && log.duration < r.max);
-                            if (range) range.count++;
+                        if (log.provider_group && log.tokens_used && log.tokens_used > 0) {
+                            groupTokens[log.provider_group] = (groupTokens[log.provider_group] || 0) + log.tokens_used;
                         }
                     });
 
-                    const data = timeRanges.filter(r => r.count > 0);
+                    const data = Object.entries(groupTokens)
+                        .map(([group, tokens]) => ({
+                            group: group.length > 12 ? group.substring(0, 12) + '...' : group,
+                            fullGroup: group,
+                            tokens
+                        }))
+                        .sort((a, b) => b.tokens - a.tokens)
+                        .slice(0, 8); // 只显示前8个分组
+
                     if (data.length === 0) {
                         container.append("div")
                             .style("display", "flex")
@@ -1253,31 +1275,36 @@
                             .style("height", "200px")
                             .style("color", "#9CA3AF")
                             .style("font-size", "14px")
-                            .text("暂无响应时间数据");
+                            .text("暂无分组Token数据");
                         return;
                     }
 
-                    const margin = { top: 20, right: 20, bottom: 50, left: 50 };
-                    const width = 320 - margin.left - margin.right;
-                    const height = 200 - margin.top - margin.bottom;
+                    const margin = { top: 20, right: 20, bottom: 70, left: 70 };
+                    const width = 350 - margin.left - margin.right;
+                    const height = 220 - margin.top - margin.bottom;
 
                     const svg = container.append("svg")
                         .attr("width", width + margin.left + margin.right)
                         .attr("height", height + margin.top + margin.bottom)
-                        .style("overflow", "visible");
+                        .style("overflow", "visible")
+                        .style("margin", "0 auto")
+                        .style("display", "block");
 
                     const g = svg.append("g")
                         .attr("transform", `translate(${margin.left},${margin.top})`);
 
                     const x = d3.scaleBand()
-                        .domain(data.map(d => d.label))
+                        .domain(data.map(d => d.group))
                         .range([0, width])
-                        .padding(0.3);
+                        .padding(0.2);
 
                     const y = d3.scaleLinear()
-                        .domain([0, d3.max(data, d => d.count)])
+                        .domain([0, d3.max(data, d => d.tokens)])
                         .nice()
                         .range([height, 0]);
+
+                    // 创建渐变色
+                    const colors = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"];
 
                     // 添加网格线
                     g.append("g")
@@ -1295,32 +1322,32 @@
                         .data(data)
                         .enter().append("rect")
                         .attr("class", "bar")
-                        .attr("x", d => x(d.label))
+                        .attr("x", d => x(d.group))
                         .attr("width", x.bandwidth())
                         .attr("y", height)
                         .attr("height", 0)
-                        .attr("fill", d => d.color)
+                        .attr("fill", (d, i) => colors[i % colors.length])
                         .attr("rx", 4)
                         .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.1))")
                         .transition()
                         .duration(1000)
                         .delay((d, i) => i * 150)
-                        .attr("y", d => y(d.count))
-                        .attr("height", d => height - y(d.count));
+                        .attr("y", d => y(d.tokens))
+                        .attr("height", d => height - y(d.tokens));
 
                     // 添加数值标签
                     g.selectAll(".label")
                         .data(data)
                         .enter().append("text")
                         .attr("class", "label")
-                        .attr("x", d => x(d.label) + x.bandwidth() / 2)
-                        .attr("y", d => y(d.count) - 8)
+                        .attr("x", d => x(d.group) + x.bandwidth() / 2)
+                        .attr("y", d => y(d.tokens) - 8)
                         .attr("text-anchor", "middle")
-                        .style("font-size", "11px")
+                        .style("font-size", "10px")
                         .style("font-weight", "bold")
                         .style("fill", "#374151")
                         .style("opacity", 0)
-                        .text(d => d.count)
+                        .text(d => d.tokens.toLocaleString())
                         .transition()
                         .duration(1000)
                         .delay((d, i) => i * 150 + 500)
@@ -1331,38 +1358,28 @@
                         .attr("transform", `translate(0,${height})`)
                         .call(d3.axisBottom(x))
                         .selectAll("text")
-                        .style("font-size", "10px")
-                        .style("fill", "#6B7280");
+                        .style("font-size", "9px")
+                        .style("fill", "#6B7280")
+                        .attr("transform", "rotate(-45)")
+                        .style("text-anchor", "end");
 
                     // Y轴
                     g.append("g")
-                        .call(d3.axisLeft(y).ticks(5))
+                        .call(d3.axisLeft(y).ticks(5).tickFormat(d => d.toLocaleString()))
                         .selectAll("text")
                         .style("font-size", "10px")
                         .style("fill", "#6B7280");
 
-                    // 添加图例
-                    const legend = svg.append("g")
-                        .attr("transform", `translate(${margin.left}, ${height + margin.top + 35})`);
-
-                    const legendItems = legend.selectAll(".legend-item")
-                        .data(data)
-                        .enter().append("g")
-                        .attr("class", "legend-item")
-                        .attr("transform", (d, i) => `translate(${i * 60}, 0)`);
-
-                    legendItems.append("rect")
-                        .attr("width", 8)
-                        .attr("height", 8)
-                        .attr("fill", d => d.color)
-                        .attr("rx", 2);
-
-                    legendItems.append("text")
-                        .attr("x", 12)
-                        .attr("y", 6)
-                        .style("font-size", "9px")
+                    // 添加Y轴标签
+                    g.append("text")
+                        .attr("transform", "rotate(-90)")
+                        .attr("y", 0 - margin.left)
+                        .attr("x", 0 - (height / 2))
+                        .attr("dy", "1em")
+                        .style("text-anchor", "middle")
+                        .style("font-size", "12px")
                         .style("fill", "#6B7280")
-                        .text(d => d.label);
+                        .text("Token数量");
                 }
             }
         }

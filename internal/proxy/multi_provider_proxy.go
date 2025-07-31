@@ -13,6 +13,7 @@ import (
 	"turnsapi/internal/keymanager"
 	"turnsapi/internal/logger"
 	"turnsapi/internal/providers"
+	"turnsapi/internal/proxykey"
 	"turnsapi/internal/ratelimit"
 	"turnsapi/internal/router"
 
@@ -23,6 +24,7 @@ import (
 type MultiProviderProxy struct {
 	config          *internal.Config
 	keyManager      *keymanager.MultiGroupKeyManager
+	proxyKeyManager *proxykey.Manager
 	providerManager *providers.ProviderManager
 	providerRouter  *router.ProviderRouter
 	requestLogger   *logger.RequestLogger
@@ -55,6 +57,41 @@ func NewMultiProviderProxy(
 	return &MultiProviderProxy{
 		config:          config,
 		keyManager:      keyManager,
+		providerManager: providerManager,
+		providerRouter:  providerRouter,
+		requestLogger:   requestLogger,
+		rpmLimiter:      rpmLimiter,
+	}
+}
+
+// NewMultiProviderProxyWithProxyKey 创建带代理密钥管理器的多提供商代理
+func NewMultiProviderProxyWithProxyKey(
+	config *internal.Config,
+	keyManager *keymanager.MultiGroupKeyManager,
+	proxyKeyManager *proxykey.Manager,
+	requestLogger *logger.RequestLogger,
+) *MultiProviderProxy {
+	// 创建提供商管理器
+	factory := providers.NewDefaultProviderFactory()
+	providerManager := providers.NewProviderManager(factory)
+
+	// 创建带代理密钥管理器的提供商路由器
+	providerRouter := router.NewProviderRouterWithProxyKey(config, providerManager, proxyKeyManager)
+
+	// 创建RPM限制器并初始化分组限制
+	rpmLimiter := ratelimit.NewRPMLimiter()
+	if config.UserGroups != nil {
+		for groupID, group := range config.UserGroups {
+			if group.RPMLimit > 0 {
+				rpmLimiter.SetLimit(groupID, group.RPMLimit)
+			}
+		}
+	}
+
+	return &MultiProviderProxy{
+		config:          config,
+		keyManager:      keyManager,
+		proxyKeyManager: proxyKeyManager,
 		providerManager: providerManager,
 		providerRouter:  providerRouter,
 		requestLogger:   requestLogger,
@@ -228,9 +265,11 @@ func (p *MultiProviderProxy) HandleChatCompletion(c *gin.Context) {
 
 	// 获取代理密钥信息以检查权限
 	var allowedGroups []string
+	var proxyKeyID string
 	if keyInfo, exists := c.Get("key_info"); exists {
 		if proxyKey, ok := keyInfo.(*logger.ProxyKey); ok {
 			allowedGroups = proxyKey.AllowedGroups
+			proxyKeyID = proxyKey.ID
 		}
 	}
 
@@ -238,6 +277,7 @@ func (p *MultiProviderProxy) HandleChatCompletion(c *gin.Context) {
 	routeReq := &router.RouteRequest{
 		Model:         req.Model,
 		AllowedGroups: allowedGroups, // 传递代理密钥的权限限制
+		ProxyKeyID:    proxyKeyID,    // 传递代理密钥ID用于分组选择
 	}
 
 	// 检查是否有显式指定的提供商分组
@@ -290,8 +330,6 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 		// 检查RPM限制
 		if !p.rpmLimiter.Allow(routeResult.GroupID) {
 			// log.Printf("RPM limit exceeded for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
-			// 注意：RPM限制不应该被视为分组失败，因为这是正常的限流行为
-			// 不调用 ReportFailure，避免分组被错误地临时阻止
 
 			// 如果是最后一次尝试，返回限流错误
 			if attempt == maxRetries-1 {
@@ -311,8 +349,6 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 		apiKey, err := p.keyManager.GetNextKeyForGroup(routeResult.GroupID)
 		if err != nil {
 			log.Printf("Failed to get API key for group %s (attempt %d/%d): %v", routeResult.GroupID, attempt+1, maxRetries, err)
-			// 报告失败
-			p.providerRouter.ReportFailure(req.Model, routeResult.GroupID)
 			if attempt == maxRetries-1 {
 				return false
 			}
@@ -331,12 +367,8 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 		}
 
 		if success {
-			// 报告成功
-			p.providerRouter.ReportSuccess(req.Model, routeResult.GroupID)
 			return true
 		} else {
-			// 报告失败
-			p.providerRouter.ReportFailure(req.Model, routeResult.GroupID)
 			log.Printf("Request failed for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
 		}
 	}

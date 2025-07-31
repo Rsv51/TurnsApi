@@ -1115,36 +1115,97 @@
                     </div>
 
                     <!-- 生成密钥表单 -->
-                    <div x-show="showGenerateProxyKeyForm" x-cloak class="mb-6 p-4 bg-gray-50 rounded-lg">
-                        <h4 class="text-lg font-medium mb-4">生成新的代理密钥</h4>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">密钥名称</label>
-                                <input type="text" x-model="newProxyKey.name" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="输入密钥名称">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
-                                <input type="text" x-model="newProxyKey.description" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="输入描述信息">
+                    <div x-show="showGenerateProxyKeyForm" x-cloak class="mb-6 p-6 bg-gray-50 rounded-lg border border-gray-200">
+                        <h4 class="text-lg font-medium mb-6 flex items-center">
+                            <svg class="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9a2 2 0 012-2m0 0V7a2 2 0 012-2h4zm-6 2v6h4V9H9z"></path>
+                            </svg>
+                            生成新的代理密钥
+                        </h4>
+
+                        <!-- 基本信息 -->
+                        <div class="mb-6">
+                            <h5 class="text-sm font-medium text-gray-800 mb-3">基本信息</h5>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">密钥名称 *</label>
+                                    <input type="text" x-model="newProxyKey.name" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="输入密钥名称">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                                    <input type="text" x-model="newProxyKey.description" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="输入描述信息">
+                                </div>
                             </div>
                         </div>
-                        <div class="mt-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-2">允许访问的分组</label>
-                            <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                <template x-for="(provider, groupId) in providerStatuses" :key="groupId">
-                                    <label class="flex items-center space-x-2">
-                                        <input type="checkbox"
-                                               :value="groupId"
-                                               :checked="newProxyKey.allowedGroups.includes(groupId)"
-                                               @change="toggleProxyKeyGroup(groupId, $event.target.checked)"
-                                               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                        <span class="text-sm" x-text="provider.group_name"></span>
-                                    </label>
-                                </template>
+
+                        <!-- 分组权限 -->
+                        <div class="mb-6">
+                            <h5 class="text-sm font-medium text-gray-800 mb-3">分组权限</h5>
+                            <div class="bg-white rounded-lg border border-gray-200 p-4">
+                                <label class="block text-sm font-medium text-gray-700 mb-3">允许访问的分组</label>
+                                <div class="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto">
+                                    <template x-for="(provider, groupId) in providerStatuses" :key="groupId">
+                                        <label class="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded">
+                                            <input type="checkbox"
+                                                   :value="groupId"
+                                                   :checked="newProxyKey.allowedGroups.includes(groupId)"
+                                                   @change="toggleProxyKeyGroup(groupId, $event.target.checked)"
+                                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                            <span class="text-sm" x-text="provider.group_name"></span>
+                                        </label>
+                                    </template>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-2">不选择任何分组表示可以访问所有分组</p>
                             </div>
-                            <p class="text-xs text-gray-500 mt-1">不选择任何分组表示可以访问所有分组</p>
                         </div>
-                        <div class="mt-4 flex space-x-2">
-                            <button @click="generateProxyKey()" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-md">
+
+                        <!-- 分组间请求设置 -->
+                        <div x-show="newProxyKey.allowedGroups.length > 1 || newProxyKey.allowedGroups.length === 0" class="mb-6">
+                            <h5 class="text-sm font-medium text-gray-800 mb-3 flex items-center">
+                                <svg class="w-4 h-4 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"></path>
+                                </svg>
+                                分组间请求设置
+                            </h5>
+                            <div class="bg-white rounded-lg border border-gray-200 p-4">
+                                <div class="mb-4">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">选择策略</label>
+                                    <select x-model="newProxyKey.groupSelectionConfig.strategy" @change="onNewProxyKeyStrategyChange()" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                        <option value="round_robin">轮询 (Round Robin) - 在分组间轮流分配请求</option>
+                                        <option value="weighted">权重 (Weighted) - 根据权重比例分配请求</option>
+                                        <option value="random">随机 (Random) - 随机选择分组</option>
+                                        <option value="failover">故障转移 (Failover) - 按优先级顺序选择</option>
+                                    </select>
+                                </div>
+
+                                <!-- 权重配置 -->
+                                <div x-show="newProxyKey.groupSelectionConfig.strategy === 'weighted'" class="mt-4">
+                                    <label class="block text-sm font-medium text-gray-700 mb-3">分组权重配置</label>
+                                    <div class="space-y-2">
+                                        <template x-for="groupId in getGroupsForWeightConfig(newProxyKey.allowedGroups)" :key="groupId">
+                                            <div class="flex items-center space-x-3 p-2 bg-gray-50 rounded">
+                                                <span class="text-sm font-medium min-w-0 flex-1" x-text="getGroupName(groupId)"></span>
+                                                <div class="flex items-center space-x-2">
+                                                    <label class="text-xs text-gray-600">权重:</label>
+                                                    <input type="number"
+                                                           :value="getGroupWeight(groupId)"
+                                                           @input="setGroupWeight(groupId, $event.target.value)"
+                                                           min="1" max="100"
+                                                           class="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-2">权重越高，获得的请求越多。例如权重3:1的分组将获得约75%:25%的请求分配。</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex space-x-2">
+                            <button @click="generateProxyKey()" class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-md flex items-center">
+                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                                </svg>
                                 生成密钥
                             </button>
                             <button @click="showGenerateProxyKeyForm = false; resetProxyKeyForm()" class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-md">
@@ -1159,7 +1220,8 @@
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">密钥</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名称</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名称/描述</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">分组配置</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">使用次数</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">创建时间</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
@@ -1194,6 +1256,32 @@
                                             <div class="text-sm font-medium text-gray-900" x-text="key.name"></div>
                                             <div class="text-sm text-gray-500" x-text="key.description"></div>
                                         </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <!-- 分组选择配置显示 -->
+                                            <template x-if="key.allowed_groups && key.allowed_groups.length > 1">
+                                                <div class="text-sm">
+                                                    <div class="flex items-center space-x-2 mb-1">
+                                                        <span class="text-xs font-medium text-gray-600">策略:</span>
+                                                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                                                              :class="getStrategyBadgeClass(key.group_selection_config?.strategy || 'round_robin')"
+                                                              x-text="getStrategyDisplayName(key.group_selection_config?.strategy || 'round_robin')"></span>
+                                                    </div>
+                                                    <template x-if="key.group_selection_config?.strategy === 'weighted' && key.group_selection_config?.group_weights">
+                                                        <div class="text-xs text-gray-500">
+                                                            <template x-for="weight in key.group_selection_config.group_weights" :key="weight.group_id">
+                                                                <div class="flex justify-between">
+                                                                    <span x-text="getGroupName(weight.group_id)"></span>
+                                                                    <span x-text="'权重: ' + weight.weight"></span>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </template>
+                                            <template x-if="!key.allowed_groups || key.allowed_groups.length <= 1">
+                                                <span class="text-xs text-gray-400">单分组</span>
+                                            </template>
+                                        </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="key.usage_count || 0"></td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(key.created_at)"></td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -1204,7 +1292,7 @@
                                 </template>
                                 <template x-if="proxyKeys.length === 0">
                                     <tr>
-                                        <td colspan="5" class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
+                                        <td colspan="6" class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
                                             <template x-if="proxyKeySearch.trim()">
                                                 <span>未找到匹配的代理密钥</span>
                                             </template>
@@ -1263,52 +1351,114 @@
 
                     <!-- 编辑代理密钥模态框 -->
                     <div x-show="showEditProxyKeyModal" x-cloak class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-                        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                        <div class="relative top-10 mx-auto p-6 border max-w-4xl shadow-lg rounded-lg bg-white">
                             <div class="mt-3">
-                                <h3 class="text-lg font-medium text-gray-900 mb-4">编辑代理密钥</h3>
-                                <form @submit.prevent="updateProxyKey()">
-                                    <div class="mb-4">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">密钥名称</label>
-                                        <input type="text" x-model="editingProxyKey.name" required
-                                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                               placeholder="输入密钥名称">
-                                    </div>
-                                    <div class="mb-4">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
-                                        <input type="text" x-model="editingProxyKey.description"
-                                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                               placeholder="输入描述信息">
-                                    </div>
-                                    <div class="mb-4">
-                                        <label class="flex items-center">
-                                            <input type="checkbox" x-model="editingProxyKey.is_active"
-                                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                            <span class="ml-2 text-sm font-medium text-gray-700">启用密钥</span>
-                                        </label>
-                                    </div>
-                                    <div class="mb-4">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">允许访问的分组</label>
-                                        <div class="max-h-40 overflow-y-auto border border-gray-300 rounded-md p-2">
-                                            <template x-for="(provider, groupId) in providerStatuses" :key="groupId">
-                                                <label class="flex items-center space-x-2 py-1">
-                                                    <input type="checkbox"
-                                                           :value="groupId"
-                                                           :checked="editingProxyKey.allowedGroups.includes(groupId)"
-                                                           @change="toggleEditingProxyKeyGroup(groupId, $event.target.checked)"
-                                                           class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                                    <span class="text-sm" x-text="provider.group_name"></span>
-                                                </label>
-                                            </template>
+                                <h3 class="text-xl font-bold text-gray-900 mb-6 flex items-center">
+                                    <svg class="w-6 h-6 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                    </svg>
+                                    编辑代理密钥
+                                </h3>
+                                <form @submit.prevent="updateProxyKey()" class="space-y-6">
+                                    <!-- 基本信息 -->
+                                    <div class="bg-gray-50 rounded-lg p-4">
+                                        <h4 class="text-sm font-medium text-gray-800 mb-4">基本信息</h4>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">密钥名称 *</label>
+                                                <input type="text" x-model="editingProxyKey.name" required
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                       placeholder="输入密钥名称">
+                                            </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                                                <input type="text" x-model="editingProxyKey.description"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                       placeholder="输入描述信息">
+                                            </div>
                                         </div>
-                                        <p class="text-xs text-gray-500 mt-1">不选择任何分组表示可以访问所有分组</p>
+                                        <div class="mt-4">
+                                            <label class="flex items-center">
+                                                <input type="checkbox" x-model="editingProxyKey.is_active"
+                                                       class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                                <span class="ml-2 text-sm font-medium text-gray-700">启用密钥</span>
+                                            </label>
+                                        </div>
                                     </div>
-                                    <div class="flex space-x-2">
+
+                                    <!-- 分组权限 -->
+                                    <div class="bg-gray-50 rounded-lg p-4">
+                                        <h4 class="text-sm font-medium text-gray-800 mb-4">分组权限</h4>
+                                        <div class="bg-white rounded-lg border border-gray-200 p-3">
+                                            <label class="block text-sm font-medium text-gray-700 mb-3">允许访问的分组</label>
+                                            <div class="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto">
+                                                <template x-for="(provider, groupId) in providerStatuses" :key="groupId">
+                                                    <label class="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded">
+                                                        <input type="checkbox"
+                                                               :value="groupId"
+                                                               :checked="editingProxyKey.allowedGroups.includes(groupId)"
+                                                               @change="toggleEditingProxyKeyGroup(groupId, $event.target.checked)"
+                                                               class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                                        <span class="text-sm" x-text="provider.group_name"></span>
+                                                    </label>
+                                                </template>
+                                            </div>
+                                            <p class="text-xs text-gray-500 mt-2">不选择任何分组表示可以访问所有分组</p>
+                                        </div>
+                                    </div>
+
+                                    <!-- 分组间请求设置 -->
+                                    <div x-show="editingProxyKey.allowedGroups.length > 1 || editingProxyKey.allowedGroups.length === 0" class="bg-gray-50 rounded-lg p-4">
+                                        <h4 class="text-sm font-medium text-gray-800 mb-4 flex items-center">
+                                            <svg class="w-4 h-4 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3"></path>
+                                            </svg>
+                                            分组间请求设置
+                                        </h4>
+                                        <div class="bg-white rounded-lg border border-gray-200 p-3">
+                                            <div class="mb-4">
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">选择策略</label>
+                                                <select x-model="editingProxyKey.groupSelectionConfig.strategy" @change="onEditingProxyKeyStrategyChange()" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                                    <option value="round_robin">轮询 (Round Robin) - 在分组间轮流分配请求</option>
+                                                    <option value="weighted">权重 (Weighted) - 根据权重比例分配请求</option>
+                                                    <option value="random">随机 (Random) - 随机选择分组</option>
+                                                    <option value="failover">故障转移 (Failover) - 按优先级顺序选择</option>
+                                                </select>
+                                            </div>
+
+                                            <!-- 权重配置 -->
+                                            <div x-show="editingProxyKey.groupSelectionConfig.strategy === 'weighted'" class="mt-4">
+                                                <label class="block text-sm font-medium text-gray-700 mb-3">分组权重配置</label>
+                                                <div class="space-y-2">
+                                                    <template x-for="groupId in getGroupsForWeightConfig(editingProxyKey.allowedGroups)" :key="groupId">
+                                                        <div class="flex items-center space-x-3 p-2 bg-gray-50 rounded">
+                                                            <span class="text-sm font-medium min-w-0 flex-1" x-text="getGroupName(groupId)"></span>
+                                                            <div class="flex items-center space-x-2">
+                                                                <label class="text-xs text-gray-600">权重:</label>
+                                                                <input type="number"
+                                                                       :value="getEditingGroupWeight(groupId)"
+                                                                       @input="setEditingGroupWeight(groupId, $event.target.value)"
+                                                                       min="1" max="100"
+                                                                       class="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                                <p class="text-xs text-gray-500 mt-2">权重越高，获得的请求越多。例如权重3:1的分组将获得约75%:25%的请求分配。</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex space-x-2 pt-4 border-t border-gray-200">
                                         <button type="submit"
-                                                class="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-md">
+                                                class="bg-indigo-500 hover:bg-indigo-600 text-white px-6 py-2 rounded-md flex items-center">
+                                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                            </svg>
                                             更新密钥
                                         </button>
                                         <button type="button" @click="closeEditProxyKeyModal()"
-                                                class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-md">
+                                                class="bg-gray-300 hover:bg-gray-400 text-gray-700 px-6 py-2 rounded-md">
                                             取消
                                         </button>
                                     </div>
@@ -1362,14 +1512,22 @@
                 newProxyKey: {
                     name: '',
                     description: '',
-                    allowedGroups: []
+                    allowedGroups: [],
+                    groupSelectionConfig: {
+                        strategy: 'round_robin',
+                        groupWeights: []
+                    }
                 },
                 editingProxyKey: {
                     id: '',
                     name: '',
                     description: '',
                     is_active: true,
-                    allowedGroups: []
+                    allowedGroups: [],
+                    groupSelectionConfig: {
+                        strategy: 'round_robin',
+                        groupWeights: []
+                    }
                 },
                 // 代理密钥分页和搜索
                 proxyKeySearch: '',
@@ -2990,12 +3148,24 @@
                     }
 
                     try {
+                        // 准备请求数据
+                        const requestData = {
+                            name: this.newProxyKey.name,
+                            description: this.newProxyKey.description,
+                            allowedGroups: this.newProxyKey.allowedGroups
+                        };
+
+                        // 如果有多个分组或空分组（访问所有分组），添加分组选择配置
+                        if (this.newProxyKey.allowedGroups.length > 1 || this.newProxyKey.allowedGroups.length === 0) {
+                            requestData.groupSelectionConfig = this.newProxyKey.groupSelectionConfig;
+                        }
+
                         const response = await fetch('/admin/proxy-keys', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify(this.newProxyKey)
+                            body: JSON.stringify(requestData)
                         });
 
                         const result = await response.json();
@@ -3041,7 +3211,11 @@
                     this.newProxyKey = {
                         name: '',
                         description: '',
-                        allowedGroups: []
+                        allowedGroups: [],
+                        groupSelectionConfig: {
+                            strategy: 'round_robin',
+                            groupWeights: []
+                        }
                     };
                 },
 
@@ -3070,7 +3244,14 @@
                         name: key.name,
                         description: key.description || '',
                         is_active: key.is_active !== false, // 默认为true
-                        allowedGroups: key.allowed_groups ? [...key.allowed_groups] : []
+                        allowedGroups: key.allowed_groups ? [...key.allowed_groups] : [],
+                        groupSelectionConfig: key.group_selection_config ? {
+                            strategy: key.group_selection_config.strategy || 'round_robin',
+                            groupWeights: key.group_selection_config.group_weights ? [...key.group_selection_config.group_weights] : []
+                        } : {
+                            strategy: 'round_robin',
+                            groupWeights: []
+                        }
                     };
                     this.showEditProxyKeyModal = true;
                 },
@@ -3082,7 +3263,11 @@
                         name: '',
                         description: '',
                         is_active: true,
-                        allowedGroups: []
+                        allowedGroups: [],
+                        groupSelectionConfig: {
+                            strategy: 'round_robin',
+                            groupWeights: []
+                        }
                     };
                 },
 
@@ -3106,17 +3291,25 @@
                     }
 
                     try {
+                        // 准备请求数据
+                        const requestData = {
+                            name: this.editingProxyKey.name,
+                            description: this.editingProxyKey.description,
+                            is_active: this.editingProxyKey.is_active,
+                            allowedGroups: this.editingProxyKey.allowedGroups
+                        };
+
+                        // 如果有多个分组或空分组（访问所有分组），添加分组选择配置
+                        if (this.editingProxyKey.allowedGroups.length > 1 || this.editingProxyKey.allowedGroups.length === 0) {
+                            requestData.groupSelectionConfig = this.editingProxyKey.groupSelectionConfig;
+                        }
+
                         const response = await fetch(`/admin/proxy-keys/${this.editingProxyKey.id}`, {
                             method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({
-                                name: this.editingProxyKey.name,
-                                description: this.editingProxyKey.description,
-                                is_active: this.editingProxyKey.is_active,
-                                allowedGroups: this.editingProxyKey.allowedGroups
-                            })
+                            body: JSON.stringify(requestData)
                         });
 
                         const result = await response.json();
@@ -3193,6 +3386,121 @@
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
+                },
+
+                // 分组选择配置相关方法
+                getGroupsForWeightConfig(allowedGroups) {
+                    // 如果没有选择任何分组，返回所有启用的分组
+                    if (allowedGroups.length === 0) {
+                        return Object.keys(this.providerStatuses).filter(groupId =>
+                            this.providerStatuses[groupId] && this.providerStatuses[groupId].enabled
+                        );
+                    }
+                    // 否则返回选择的分组
+                    return allowedGroups;
+                },
+
+                onNewProxyKeyStrategyChange() {
+                    if (this.newProxyKey.groupSelectionConfig.strategy === 'weighted') {
+                        // 为每个允许的分组初始化权重
+                        const groups = this.getGroupsForWeightConfig(this.newProxyKey.allowedGroups);
+                        this.newProxyKey.groupSelectionConfig.groupWeights = groups.map(groupId => ({
+                            group_id: groupId,
+                            weight: 1
+                        }));
+                    } else {
+                        this.newProxyKey.groupSelectionConfig.groupWeights = [];
+                    }
+                },
+
+                onEditingProxyKeyStrategyChange() {
+                    if (this.editingProxyKey.groupSelectionConfig.strategy === 'weighted') {
+                        // 为每个允许的分组初始化权重
+                        const groups = this.getGroupsForWeightConfig(this.editingProxyKey.allowedGroups);
+                        this.editingProxyKey.groupSelectionConfig.groupWeights = groups.map(groupId => ({
+                            group_id: groupId,
+                            weight: this.getEditingGroupWeight(groupId) || 1
+                        }));
+                    } else {
+                        this.editingProxyKey.groupSelectionConfig.groupWeights = [];
+                    }
+                },
+
+                getGroupWeight(groupId) {
+                    const weight = this.newProxyKey.groupSelectionConfig.groupWeights.find(w => w.group_id === groupId);
+                    return weight ? weight.weight : 1;
+                },
+
+                setGroupWeight(groupId, weight) {
+                    const weightObj = this.newProxyKey.groupSelectionConfig.groupWeights.find(w => w.group_id === groupId);
+                    if (weightObj) {
+                        weightObj.weight = parseInt(weight) || 1;
+                    } else {
+                        this.newProxyKey.groupSelectionConfig.groupWeights.push({
+                            group_id: groupId,
+                            weight: parseInt(weight) || 1
+                        });
+                    }
+                },
+
+                getEditingGroupWeight(groupId) {
+                    const weight = this.editingProxyKey.groupSelectionConfig.groupWeights.find(w => w.group_id === groupId);
+                    return weight ? weight.weight : 1;
+                },
+
+                setEditingGroupWeight(groupId, weight) {
+                    const weightObj = this.editingProxyKey.groupSelectionConfig.groupWeights.find(w => w.group_id === groupId);
+                    if (weightObj) {
+                        weightObj.weight = parseInt(weight) || 1;
+                    } else {
+                        this.editingProxyKey.groupSelectionConfig.groupWeights.push({
+                            group_id: groupId,
+                            weight: parseInt(weight) || 1
+                        });
+                    }
+                },
+
+                getStrategyDisplayName(strategy) {
+                    const names = {
+                        'round_robin': '轮询',
+                        'weighted': '权重',
+                        'random': '随机',
+                        'failover': '故障转移'
+                    };
+                    return names[strategy] || strategy;
+                },
+
+                getStrategyBadgeClass(strategy) {
+                    const classes = {
+                        'round_robin': 'bg-blue-100 text-blue-800',
+                        'weighted': 'bg-purple-100 text-purple-800',
+                        'random': 'bg-green-100 text-green-800',
+                        'failover': 'bg-orange-100 text-orange-800'
+                    };
+                    return classes[strategy] || 'bg-gray-100 text-gray-800';
+                },
+
+                async viewGroupStats(keyId) {
+                    try {
+                        const response = await fetch(`/admin/proxy-keys/${keyId}/group-stats`);
+                        const result = await response.json();
+
+                        if (result.success) {
+                            // 显示统计信息的模态框或弹窗
+                            let statsText = '分组使用统计:\n\n';
+                            for (const [groupId, stats] of Object.entries(result.stats)) {
+                                statsText += `${this.getGroupName(groupId)}:\n`;
+                                statsText += `  使用次数: ${stats.usage_count}\n`;
+                                statsText += `  最后使用: ${stats.last_used ? this.formatDate(stats.last_used) : '从未使用'}\n\n`;
+                            }
+                            alert(statsText);
+                        } else {
+                            this.showMessage('获取统计信息失败: ' + (result.error || '未知错误'), 'error');
+                        }
+                    } catch (error) {
+                        console.error('获取分组统计失败:', error);
+                        this.showMessage('网络错误，请检查连接', 'error');
+                    }
                 },
 
                 viewSystemLogs() {

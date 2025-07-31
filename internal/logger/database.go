@@ -72,6 +72,7 @@ func (d *Database) initTables() error {
 		description TEXT,
 		key TEXT NOT NULL UNIQUE,
 		allowed_groups TEXT, -- JSON数组，存储允许访问的分组ID
+		group_selection_config TEXT, -- JSON对象，存储分组选择配置
 		is_active BOOLEAN NOT NULL DEFAULT 1,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -92,6 +93,7 @@ func (d *Database) initTables() error {
 		is_stream BOOLEAN NOT NULL DEFAULT 0,
 		duration INTEGER NOT NULL DEFAULT 0,
 		tokens_used INTEGER NOT NULL DEFAULT 0,
+		tokens_estimated BOOLEAN NOT NULL DEFAULT 0,
 		error TEXT,
 		client_ip TEXT NOT NULL DEFAULT '',
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -149,6 +151,27 @@ func (d *Database) migrateDatabase() error {
 		log.Println("Successfully added allowed_groups column")
 	}
 
+	// 检查proxy_keys表是否有group_selection_config列
+	err = d.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('proxy_keys')
+		WHERE name = 'group_selection_config'
+	`).Scan(&columnExists)
+
+	if err != nil {
+		return fmt.Errorf("failed to check group_selection_config column existence: %w", err)
+	}
+
+	// 如果列不存在，添加它
+	if !columnExists {
+		log.Println("Adding group_selection_config column to proxy_keys table...")
+		_, err = d.db.Exec(`ALTER TABLE proxy_keys ADD COLUMN group_selection_config TEXT`)
+		if err != nil {
+			return fmt.Errorf("failed to add group_selection_config column: %w", err)
+		}
+		log.Println("Successfully added group_selection_config column")
+	}
+
 	// 检查request_logs表是否有client_ip列
 	err = d.db.QueryRow(`
 		SELECT COUNT(*) > 0
@@ -168,6 +191,27 @@ func (d *Database) migrateDatabase() error {
 			return fmt.Errorf("failed to add client_ip column: %w", err)
 		}
 		log.Println("Successfully added client_ip column")
+	}
+
+	// 检查request_logs表是否有tokens_estimated列
+	err = d.db.QueryRow(`
+		SELECT COUNT(*) > 0
+		FROM pragma_table_info('request_logs')
+		WHERE name = 'tokens_estimated'
+	`).Scan(&columnExists)
+
+	if err != nil {
+		return fmt.Errorf("failed to check tokens_estimated column existence: %w", err)
+	}
+
+	// 如果列不存在，添加它
+	if !columnExists {
+		log.Println("Adding tokens_estimated column to request_logs table...")
+		_, err = d.db.Exec(`ALTER TABLE request_logs ADD COLUMN tokens_estimated BOOLEAN NOT NULL DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("failed to add tokens_estimated column: %w", err)
+		}
+		log.Println("Successfully added tokens_estimated column")
 	}
 
 	return nil
@@ -212,14 +256,14 @@ func (d *Database) InsertRequestLog(log *RequestLog) error {
 	query := `
 	INSERT INTO request_logs (
 		proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		status_code, is_stream, duration, tokens_used, error, client_ip, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		status_code, is_stream, duration, tokens_used, tokens_estimated, error, client_ip, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := d.db.Exec(query,
 		log.ProxyKeyName, log.ProxyKeyID, log.ProviderGroup, log.OpenRouterKey, log.Model,
 		log.RequestBody, log.ResponseBody, log.StatusCode, log.IsStream,
-		log.Duration, log.TokensUsed, log.Error, log.ClientIP, log.CreatedAt,
+		log.Duration, log.TokensUsed, log.TokensEstimated, log.Error, log.ClientIP, log.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert request log: %w", err)
@@ -254,7 +298,7 @@ func (d *Database) GetRequestLogs(proxyKeyName, providerGroup string, limit, off
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, status_code,
-		   is_stream, duration, tokens_used, error, client_ip, created_at
+		   is_stream, duration, tokens_used, tokens_estimated, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -276,7 +320,7 @@ func (d *Database) GetRequestLogs(proxyKeyName, providerGroup string, limit, off
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.StatusCode, &log.IsStream, &log.Duration,
-			&log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
+			&log.TokensUsed, &log.TokensEstimated, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)
@@ -328,7 +372,7 @@ func (d *Database) GetRequestLogsWithFilter(filter *LogFilter) ([]*RequestLogSum
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, status_code,
-		   is_stream, duration, tokens_used, error, client_ip, created_at
+		   is_stream, duration, tokens_used, tokens_estimated, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -350,7 +394,7 @@ func (d *Database) GetRequestLogsWithFilter(filter *LogFilter) ([]*RequestLogSum
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.StatusCode, &log.IsStream, &log.Duration,
-			&log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
+			&log.TokensUsed, &log.TokensEstimated, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)
@@ -418,7 +462,7 @@ func (d *Database) GetRequestCountWithFilter(filter *LogFilter) (int64, error) {
 func (d *Database) GetRequestLogDetail(id int64) (*RequestLog, error) {
 	query := `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		   status_code, is_stream, duration, tokens_used, error, client_ip, created_at
+		   status_code, is_stream, duration, tokens_used, tokens_estimated, error, client_ip, created_at
 	FROM request_logs
 	WHERE id = ?
 	`
@@ -427,7 +471,7 @@ func (d *Database) GetRequestLogDetail(id int64) (*RequestLog, error) {
 	err := d.db.QueryRow(query, id).Scan(
 		&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey, &log.Model,
 		&log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
-		&log.Duration, &log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
+		&log.Duration, &log.TokensUsed, &log.TokensEstimated, &log.Error, &log.ClientIP, &log.CreatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -579,12 +623,12 @@ func (d *Database) InsertProxyKey(key *ProxyKey) error {
 	}
 
 	query := `
-	INSERT INTO proxy_keys (id, name, description, key, allowed_groups, is_active, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO proxy_keys (id, name, description, key, allowed_groups, group_selection_config, is_active, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := d.db.Exec(query,
-		key.ID, key.Name, key.Description, key.Key, allowedGroupsJSON, key.IsActive,
+		key.ID, key.Name, key.Description, key.Key, allowedGroupsJSON, key.GroupSelectionConfig, key.IsActive,
 		key.CreatedAt, key.UpdatedAt,
 	)
 	if err != nil {
@@ -597,15 +641,16 @@ func (d *Database) InsertProxyKey(key *ProxyKey) error {
 // GetProxyKey 根据密钥获取代理密钥信息
 func (d *Database) GetProxyKey(keyValue string) (*ProxyKey, error) {
 	query := `
-	SELECT id, name, description, key, allowed_groups, is_active, created_at, updated_at, last_used_at
+	SELECT id, name, description, key, allowed_groups, group_selection_config, is_active, created_at, updated_at, last_used_at
 	FROM proxy_keys
 	WHERE key = ? AND is_active = 1
 	`
 
 	key := &ProxyKey{}
 	var allowedGroupsJSON string
+	var groupSelectionConfigJSON sql.NullString
 	err := d.db.QueryRow(query, keyValue).Scan(
-		&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &key.IsActive,
+		&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &groupSelectionConfigJSON, &key.IsActive,
 		&key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
 	)
 	if err != nil {
@@ -624,13 +669,20 @@ func (d *Database) GetProxyKey(keyValue string) (*ProxyKey, error) {
 		key.AllowedGroups = []string{}
 	}
 
+	// 处理GroupSelectionConfig（可能为NULL）
+	if groupSelectionConfigJSON.Valid {
+		key.GroupSelectionConfig = groupSelectionConfigJSON.String
+	} else {
+		key.GroupSelectionConfig = ""
+	}
+
 	return key, nil
 }
 
 // GetAllProxyKeys 获取所有代理密钥
 func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 	query := `
-	SELECT id, name, description, key, allowed_groups, is_active, created_at, updated_at, last_used_at
+	SELECT id, name, description, key, allowed_groups, group_selection_config, is_active, created_at, updated_at, last_used_at
 	FROM proxy_keys
 	ORDER BY created_at DESC
 	`
@@ -645,8 +697,9 @@ func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 	for rows.Next() {
 		key := &ProxyKey{}
 		var allowedGroupsJSON string
+		var groupSelectionConfigJSON sql.NullString
 		err := rows.Scan(
-			&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &key.IsActive,
+			&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &groupSelectionConfigJSON, &key.IsActive,
 			&key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
 		)
 		if err != nil {
@@ -660,6 +713,13 @@ func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 			}
 		} else {
 			key.AllowedGroups = []string{}
+		}
+
+		// 处理GroupSelectionConfig（可能为NULL）
+		if groupSelectionConfigJSON.Valid {
+			key.GroupSelectionConfig = groupSelectionConfigJSON.String
+		} else {
+			key.GroupSelectionConfig = ""
 		}
 
 		keys = append(keys, key)
@@ -682,13 +742,13 @@ func (d *Database) UpdateProxyKey(key *ProxyKey) error {
 
 	query := `
 	UPDATE proxy_keys
-	SET name = ?, description = ?, allowed_groups = ?, is_active = ?, updated_at = ?
+	SET name = ?, description = ?, allowed_groups = ?, group_selection_config = ?, is_active = ?, updated_at = ?
 	WHERE id = ?
 	`
 
 	now := time.Now()
 	_, err := d.db.Exec(query,
-		key.Name, key.Description, allowedGroupsJSON, key.IsActive, now, key.ID,
+		key.Name, key.Description, allowedGroupsJSON, key.GroupSelectionConfig, key.IsActive, now, key.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update proxy key: %w", err)
@@ -806,7 +866,7 @@ func (d *Database) GetAllRequestLogsForExport(proxyKeyName, providerGroup string
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		   status_code, is_stream, duration, tokens_used, error, client_ip, created_at
+		   status_code, is_stream, duration, tokens_used, tokens_estimated, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -827,7 +887,7 @@ func (d *Database) GetAllRequestLogsForExport(proxyKeyName, providerGroup string
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
-			&log.Duration, &log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
+			&log.Duration, &log.TokensUsed, &log.TokensEstimated, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)
@@ -879,7 +939,7 @@ func (d *Database) GetAllRequestLogsForExportWithFilter(filter *LogFilter) ([]*R
 	// 构建查询语句
 	query = `
 	SELECT id, proxy_key_name, proxy_key_id, provider_group, openrouter_key, model, request_body, response_body,
-		   status_code, is_stream, duration, tokens_used, error, client_ip, created_at
+		   status_code, is_stream, duration, tokens_used, tokens_estimated, error, client_ip, created_at
 	FROM request_logs`
 
 	if len(conditions) > 0 {
@@ -900,7 +960,7 @@ func (d *Database) GetAllRequestLogsForExportWithFilter(filter *LogFilter) ([]*R
 		err := rows.Scan(
 			&log.ID, &log.ProxyKeyName, &log.ProxyKeyID, &log.ProviderGroup, &log.OpenRouterKey,
 			&log.Model, &log.RequestBody, &log.ResponseBody, &log.StatusCode, &log.IsStream,
-			&log.Duration, &log.TokensUsed, &log.Error, &log.ClientIP, &log.CreatedAt,
+			&log.Duration, &log.TokensUsed, &log.TokensEstimated, &log.Error, &log.ClientIP, &log.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan request log: %w", err)

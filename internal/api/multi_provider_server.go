@@ -40,6 +40,21 @@ type MultiProviderServer struct {
 	startTime       time.Time
 }
 
+// configManagerAdapter 配置管理器适配器
+type configManagerAdapter struct {
+	configManager *internal.ConfigManager
+}
+
+// GetEnabledGroups 实现ConfigProvider接口
+func (cma *configManagerAdapter) GetEnabledGroups() map[string]interface{} {
+	enabledGroups := cma.configManager.GetEnabledGroups()
+	result := make(map[string]interface{})
+	for groupID := range enabledGroups {
+		result[groupID] = struct{}{}
+	}
+	return result
+}
+
 // NewMultiProviderServer 创建新的多提供商服务器
 func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *keymanager.MultiGroupKeyManager) *MultiProviderServer {
 	config := configManager.GetConfig()
@@ -73,13 +88,17 @@ func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *k
 	log.Printf("Gin模式设置为: %s", ginMode)
 
 	// 创建请求日志记录器
+	log.Printf("Creating request logger with database path: %s", config.Database.Path)
 	requestLogger, err := logger.NewRequestLogger(config.Database.Path)
 	if err != nil {
-		log.Printf("Failed to create request logger: %v", err)
+		log.Fatalf("Failed to create request logger: %v", err)
 	}
+	log.Printf("Request logger created successfully")
 
 	// 创建代理密钥管理器
-	proxyKeyManager := proxykey.NewManagerWithDB(requestLogger)
+	// 创建配置提供者适配器
+	configProvider := &configManagerAdapter{configManager: configManager}
+	proxyKeyManager := proxykey.NewManagerWithConfig(requestLogger, configProvider)
 
 	server := &MultiProviderServer{
 		configManager:   configManager,
@@ -93,7 +112,7 @@ func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *k
 	}
 
 	// 创建多提供商代理
-	server.proxy = proxy.NewMultiProviderProxy(config, keyManager, requestLogger)
+	server.proxy = proxy.NewMultiProviderProxyWithProxyKey(config, keyManager, proxyKeyManager, requestLogger)
 
 	// 创建健康检查器
 	factory := providers.NewDefaultProviderFactory()
@@ -211,6 +230,8 @@ func (s *MultiProviderServer) setupRoutes() {
 		admin.POST("/proxy-keys", s.handleGenerateProxyKey)
 		admin.PUT("/proxy-keys/:id", s.handleUpdateProxyKey)
 		admin.DELETE("/proxy-keys/:id", s.handleDeleteProxyKey)
+		admin.GET("/proxy-keys/:id/group-stats", s.handleProxyKeyGroupStats)
+
 
 		// 分组管理
 		admin.GET("/groups/manage", s.handleGroupsManage)
@@ -2057,7 +2078,9 @@ func (s *MultiProviderServer) handleProxyKeys(c *gin.Context) {
 	}
 
 	// 获取所有密钥
+	log.Printf("handleProxyKeys: Getting all keys from proxy key manager")
 	allKeys := s.proxyKeyManager.GetAllKeys()
+	log.Printf("handleProxyKeys: Retrieved %d keys from manager", len(allKeys))
 
 	// 搜索过滤
 	var filteredKeys []*proxykey.ProxyKey
@@ -2112,12 +2135,14 @@ func (s *MultiProviderServer) handleProxyKeys(c *gin.Context) {
 	})
 }
 
+
 // handleGenerateProxyKey 处理生成代理密钥
 func (s *MultiProviderServer) handleGenerateProxyKey(c *gin.Context) {
 	var req struct {
-		Name          string   `json:"name" binding:"required"`
-		Description   string   `json:"description"`
-		AllowedGroups []string `json:"allowedGroups"` // 允许访问的分组ID列表
+		Name                 string                           `json:"name" binding:"required"`
+		Description          string                           `json:"description"`
+		AllowedGroups        []string                         `json:"allowedGroups"`        // 允许访问的分组ID列表
+		GroupSelectionConfig *proxykey.GroupSelectionConfig  `json:"groupSelectionConfig"` // 分组选择配置
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2127,7 +2152,7 @@ func (s *MultiProviderServer) handleGenerateProxyKey(c *gin.Context) {
 		return
 	}
 
-	key, err := s.proxyKeyManager.GenerateKey(req.Name, req.Description, req.AllowedGroups)
+	key, err := s.proxyKeyManager.GenerateKeyWithConfig(req.Name, req.Description, req.AllowedGroups, req.GroupSelectionConfig)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to generate key",
@@ -2146,10 +2171,11 @@ func (s *MultiProviderServer) handleUpdateProxyKey(c *gin.Context) {
 	keyID := c.Param("id")
 
 	var req struct {
-		Name          string   `json:"name" binding:"required"`
-		Description   string   `json:"description"`
-		IsActive      *bool    `json:"is_active"`
-		AllowedGroups []string `json:"allowedGroups"` // 保持与生成时一致的字段名
+		Name                 string                          `json:"name" binding:"required"`
+		Description          string                          `json:"description"`
+		IsActive             *bool                           `json:"is_active"`
+		AllowedGroups        []string                        `json:"allowedGroups"`        // 保持与生成时一致的字段名
+		GroupSelectionConfig *proxykey.GroupSelectionConfig `json:"groupSelectionConfig"` // 分组选择配置
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2171,7 +2197,7 @@ func (s *MultiProviderServer) handleUpdateProxyKey(c *gin.Context) {
 		allowedGroups = []string{}
 	}
 
-	if err := s.proxyKeyManager.UpdateKey(keyID, req.Name, req.Description, isActive, allowedGroups); err != nil {
+	if err := s.proxyKeyManager.UpdateKeyWithConfig(keyID, req.Name, req.Description, isActive, allowedGroups, req.GroupSelectionConfig); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -2198,6 +2224,24 @@ func (s *MultiProviderServer) handleDeleteProxyKey(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
+	})
+}
+
+// handleProxyKeyGroupStats 处理获取代理密钥分组使用统计
+func (s *MultiProviderServer) handleProxyKeyGroupStats(c *gin.Context) {
+	keyID := c.Param("id")
+
+	stats, err := s.proxyKeyManager.GetGroupUsageStats(keyID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"stats":   stats,
 	})
 }
 
