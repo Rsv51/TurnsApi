@@ -22,8 +22,8 @@ type UserGroup struct {
 	APIKeys           []string               `yaml:"api_keys" json:"api_keys"`
 	Models            []string               `yaml:"models,omitempty" json:"models,omitempty"`
 	Headers           map[string]string      `yaml:"headers,omitempty" json:"headers,omitempty"`
-	RequestParams     map[string]interface{} `yaml:"request_params,omitempty" json:"request_params,omitempty"` // JSON请求参数覆盖
-	ModelMappings     map[string]string      `yaml:"model_mappings,omitempty" json:"model_mappings,omitempty"` // 模型名称映射：别名 -> 原始模型名
+	RequestParams     map[string]interface{} `yaml:"request_params,omitempty" json:"request_params,omitempty"`           // JSON请求参数覆盖
+	ModelMappings     map[string]string      `yaml:"model_mappings,omitempty" json:"model_mappings,omitempty"`           // 模型名称映射：别名 -> 原始模型名
 	UseNativeResponse bool                   `yaml:"use_native_response,omitempty" json:"use_native_response,omitempty"` // 是否使用原生接口响应格式
 	RPMLimit          int                    `yaml:"rpm_limit,omitempty" json:"rpm_limit,omitempty"`                     // 每分钟请求数限制
 }
@@ -41,7 +41,7 @@ func NewGroupsDB(dbPath string) (*GroupsDB, error) {
 	}
 
 	groupsDB := &GroupsDB{db: db}
-	
+
 	// 初始化表结构
 	if err := groupsDB.initTables(); err != nil {
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
@@ -330,14 +330,33 @@ func (gdb *GroupsDB) migrateNewFields() error {
 
 // UpdateAPIKeyValidation 更新API密钥的验证状态
 func (gdb *GroupsDB) UpdateAPIKeyValidation(groupID, apiKey string, isValid bool, validationError string) error {
-	updateSQL := `
-		UPDATE provider_api_keys
-		SET is_valid = ?, last_validated_at = CURRENT_TIMESTAMP, validation_error = ?
-		WHERE group_id = ? AND api_key = ?`
-
-	_, err := gdb.db.Exec(updateSQL, isValid, validationError, groupID, apiKey)
+	// 先检查记录是否存在，如果不存在则插入
+	checkSQL := `SELECT COUNT(*) FROM provider_api_keys WHERE group_id = ? AND api_key = ?`
+	var count int
+	err := gdb.db.QueryRow(checkSQL, groupID, apiKey).Scan(&count)
 	if err != nil {
-		return fmt.Errorf("failed to update API key validation status: %w", err)
+		return fmt.Errorf("failed to check API key existence: %w", err)
+	}
+
+	if count == 0 {
+		// 插入新记录
+		insertSQL := `
+			INSERT INTO provider_api_keys (group_id, api_key, is_valid, last_validated_at, validation_error, key_order)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, 0)`
+		_, err = gdb.db.Exec(insertSQL, groupID, apiKey, isValid, validationError)
+		if err != nil {
+			return fmt.Errorf("failed to insert API key validation status: %w", err)
+		}
+	} else {
+		// 更新现有记录
+		updateSQL := `
+			UPDATE provider_api_keys
+			SET is_valid = ?, last_validated_at = CURRENT_TIMESTAMP, validation_error = ?
+			WHERE group_id = ? AND api_key = ?`
+		_, err = gdb.db.Exec(updateSQL, isValid, validationError, groupID, apiKey)
+		if err != nil {
+			return fmt.Errorf("failed to update API key validation status: %w", err)
+		}
 	}
 
 	return nil
@@ -370,9 +389,9 @@ func (gdb *GroupsDB) GetAPIKeyValidationStatus(groupID string) (map[string]map[s
 		}
 
 		status := map[string]interface{}{
-			"is_valid":           isValid,
-			"last_validated_at":  lastValidatedAt,
-			"validation_error":   validationError,
+			"is_valid":          isValid,
+			"last_validated_at": lastValidatedAt,
+			"validation_error":  validationError,
 		}
 
 		result[apiKey] = status
@@ -786,6 +805,108 @@ func (gdb *GroupsDB) GetEnabledGroupCount() (int, error) {
 }
 
 // Close 关闭数据库连接
+// UpdateAPIKeyUsageStats 更新API密钥使用统计
+func (gdb *GroupsDB) UpdateAPIKeyUsageStats(groupID, apiKey string, isSuccess bool, responseTime time.Duration, errorMsg string) error {
+	// 检查记录是否存在
+	checkSQL := `SELECT COUNT(*) FROM provider_api_keys WHERE group_id = ? AND api_key = ?`
+	var count int
+	err := gdb.db.QueryRow(checkSQL, groupID, apiKey).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check API key existence: %w", err)
+	}
+
+	if count == 0 {
+		// 插入新记录
+		insertSQL := `
+			INSERT INTO provider_api_keys (group_id, api_key, is_valid, last_validated_at, validation_error, key_order)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, 0)`
+		_, err = gdb.db.Exec(insertSQL, groupID, apiKey, isSuccess, errorMsg)
+		if err != nil {
+			return fmt.Errorf("failed to insert API key usage stats: %w", err)
+		}
+	} else {
+		// 更新使用统计
+		var updateSQL string
+		var args []interface{}
+
+		if isSuccess {
+			updateSQL = `
+				UPDATE provider_api_keys
+				SET is_valid = TRUE, last_validated_at = CURRENT_TIMESTAMP, validation_error = NULL
+				WHERE group_id = ? AND api_key = ?`
+			args = []interface{}{groupID, apiKey}
+		} else {
+			updateSQL = `
+				UPDATE provider_api_keys
+				SET is_valid = FALSE, last_validated_at = CURRENT_TIMESTAMP, validation_error = ?
+				WHERE group_id = ? AND api_key = ?`
+			args = []interface{}{errorMsg, groupID, apiKey}
+		}
+
+		_, err = gdb.db.Exec(updateSQL, args...)
+		if err != nil {
+			return fmt.Errorf("failed to update API key usage stats: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// GetKeyHealthStatistics 获取密钥健康统计
+func (gdb *GroupsDB) GetKeyHealthStatistics() (map[string]interface{}, error) {
+	querySQL := `
+		SELECT
+			group_id,
+			COUNT(*) as total_keys,
+			SUM(CASE WHEN is_valid = 1 THEN 1 ELSE 0 END) as valid_keys,
+			SUM(CASE WHEN is_valid = 0 THEN 1 ELSE 0 END) as invalid_keys,
+			SUM(CASE WHEN is_valid IS NULL THEN 1 ELSE 0 END) as untested_keys
+		FROM provider_api_keys
+		GROUP BY group_id`
+
+	rows, err := gdb.db.Query(querySQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query key health statistics: %w", err)
+	}
+	defer rows.Close()
+
+	stats := make(map[string]interface{})
+	totalKeys := 0
+	totalValidKeys := 0
+	totalInvalidKeys := 0
+	totalUntestedKeys := 0
+
+	for rows.Next() {
+		var groupID string
+		var total, valid, invalid, untested int
+
+		if err := rows.Scan(&groupID, &total, &valid, &invalid, &untested); err != nil {
+			return nil, fmt.Errorf("failed to scan key health statistics: %w", err)
+		}
+
+		stats[groupID] = map[string]interface{}{
+			"total_keys":    total,
+			"valid_keys":    valid,
+			"invalid_keys":  invalid,
+			"untested_keys": untested,
+		}
+
+		totalKeys += total
+		totalValidKeys += valid
+		totalInvalidKeys += invalid
+		totalUntestedKeys += untested
+	}
+
+	stats["summary"] = map[string]interface{}{
+		"total_keys":    totalKeys,
+		"valid_keys":    totalValidKeys,
+		"invalid_keys":  totalInvalidKeys,
+		"untested_keys": totalUntestedKeys,
+	}
+
+	return stats, nil
+}
+
 func (gdb *GroupsDB) Close() error {
 	if gdb.db != nil {
 		return gdb.db.Close()

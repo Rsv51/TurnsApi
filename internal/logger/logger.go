@@ -146,6 +146,11 @@ func (r *RequestLogger) UpdateProxyKeyLastUsed(keyID string) error {
 	return r.db.UpdateProxyKeyLastUsed(keyID)
 }
 
+// UpdateProxyKeyUsage 更新代理密钥使用次数
+func (r *RequestLogger) UpdateProxyKeyUsage(keyID string) error {
+	return r.db.UpdateProxyKeyUsage(keyID)
+}
+
 // DeleteProxyKey 删除代理密钥
 func (r *RequestLogger) DeleteProxyKey(keyID string) error {
 	return r.db.DeleteProxyKey(keyID)

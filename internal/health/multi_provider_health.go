@@ -27,9 +27,7 @@ type ProviderHealthStatus struct {
 	BaseURL      string                 `json:"base_url"`
 	Enabled      bool                   `json:"enabled"`
 	Healthy      bool                   `json:"healthy"`
-	LastCheck    time.Time              `json:"last_check"`
 	LastError    string                 `json:"last_error,omitempty"`
-	ResponseTime time.Duration          `json:"response_time"`
 	TotalKeys    int                    `json:"total_keys"`
 	ActiveKeys   int                    `json:"active_keys"`
 	KeyStatuses  map[string]interface{} `json:"key_statuses,omitempty"`
@@ -37,20 +35,20 @@ type ProviderHealthStatus struct {
 
 // SystemHealthStatus 系统健康状态
 type SystemHealthStatus struct {
-	Status           string                           `json:"status"`
-	Timestamp        time.Time                        `json:"timestamp"`
-	Uptime           time.Duration                    `json:"uptime"`
-	StartTime        time.Time                        `json:"start_time"`
-	LastCheck        time.Time                        `json:"last_check"`
-	TotalGroups      int                              `json:"total_groups"`
-	HealthyGroups    int                              `json:"healthy_groups"`
-	TotalKeys        int                              `json:"total_keys"`
-	ActiveKeys       int                              `json:"active_keys"`
-	TotalRequests    int64                            `json:"total_requests"`
-	CPUUsage         float64                          `json:"cpu_usage"`
-	MemoryUsage      float64                          `json:"memory_usage"`
-	Version          string                           `json:"version"`
-	ProviderStatuses map[string]*ProviderHealthStatus `json:"provider_statuses"`
+	Status         string                           `json:"status"`
+	Timestamp      time.Time                        `json:"timestamp"`
+	Uptime         time.Duration                    `json:"uptime"`
+	StartTime      time.Time                        `json:"start_time"`
+	TotalGroups    int                              `json:"total_groups"`
+	EnabledGroups  int                              `json:"enabled_groups"`
+	DisabledGroups int                              `json:"disabled_groups"`
+	TotalKeys      int                              `json:"total_keys"`
+	ActiveKeys     int                              `json:"active_keys"`
+	TotalRequests  int64                            `json:"total_requests"`
+	CPUUsage       float64                          `json:"cpu_usage"`
+	MemoryUsage    float64                          `json:"memory_usage"`
+	Version        string                           `json:"version"`
+	GroupStatuses  map[string]*ProviderHealthStatus `json:"group_statuses"`
 }
 
 // MultiProviderHealthChecker 多提供商健康检查器
@@ -100,6 +98,7 @@ func NewMultiProviderHealthChecker(
 		cancel:          cancel,
 	}
 
+
 	return checker
 }
 
@@ -108,64 +107,63 @@ func (hc *MultiProviderHealthChecker) GetSystemHealth() *SystemHealthStatus {
 	hc.mutex.RLock()
 	defer hc.mutex.RUnlock()
 
-	// 按需执行健康检查（不再自动触发）
-	if time.Since(hc.lastSystemCheck) > 5*time.Minute {
-		// 只有在5分钟以上没有检查时才触发新检查
-		go hc.performHealthCheck()
-	}
+	// 移除自动触发逻辑，只返回缓存的状态
+	// 健康检查现在只在手动刷新或首次添加分组时执行
 
 	totalGroups := len(hc.config.UserGroups)
-	healthyGroups := 0
+	enabledGroups := 0
+	disabledGroups := 0
 	totalKeys := 0
 	activeKeys := 0
 
-	// 只包含当前配置中存在的分组的健康状态
-	currentProviderStatuses := make(map[string]*ProviderHealthStatus)
+	// 统计分组状态
+	for _, group := range hc.config.UserGroups {
+		if group.Enabled {
+			enabledGroups++
+		} else {
+			disabledGroups++
+		}
+	}
 
-	// 统计健康状态，只包含当前配置中的分组
+	// 只包含当前配置中存在的分组的健康状态
+	currentGroupStatuses := make(map[string]*ProviderHealthStatus)
+
+	// 统计密钥状态，只包含当前配置中的分组
 	for groupID, status := range hc.healthStatuses {
 		// 检查分组是否仍然存在于配置中
 		if _, exists := hc.config.UserGroups[groupID]; !exists {
 			continue // 跳过已删除的分组
 		}
 
-		currentProviderStatuses[groupID] = status
+		currentGroupStatuses[groupID] = status
 
 		if status.Enabled {
-			if status.Healthy {
-				healthyGroups++
-			}
 			totalKeys += status.TotalKeys
 			activeKeys += status.ActiveKeys
 		}
 	}
 
-	// 确定整体状态
-	overallStatus := "healthy"
-	if healthyGroups == 0 {
-		overallStatus = "unhealthy"
-	} else if healthyGroups < totalGroups {
-		overallStatus = "degraded"
-	}
+	// 系统状态始终为运行状态
+	overallStatus := "running"
 
 	// 更新系统指标
 	hc.updateSystemMetrics()
 
 	return &SystemHealthStatus{
-		Status:           overallStatus,
-		Timestamp:        time.Now(),
-		Uptime:           time.Since(hc.startTime),
-		StartTime:        hc.startTime,
-		LastCheck:        hc.lastSystemCheck,
-		TotalGroups:      totalGroups,
-		HealthyGroups:    healthyGroups,
-		TotalKeys:        totalKeys,
-		ActiveKeys:       activeKeys,
-		TotalRequests:    hc.totalRequests,
-		CPUUsage:         hc.cpuUsage,
-		MemoryUsage:      hc.memoryUsage,
-		Version:          "v2.0.0",
-		ProviderStatuses: currentProviderStatuses,
+		Status:         overallStatus,
+		Timestamp:      time.Now(),
+		Uptime:         time.Since(hc.startTime),
+		StartTime:      hc.startTime,
+		TotalGroups:    totalGroups,
+		EnabledGroups:  enabledGroups,
+		DisabledGroups: disabledGroups,
+		TotalKeys:      totalKeys,
+		ActiveKeys:     activeKeys,
+		TotalRequests:  hc.totalRequests,
+		CPUUsage:       hc.cpuUsage,
+		MemoryUsage:    hc.memoryUsage,
+		Version:        "v2.2.0",
+		GroupStatuses:  currentGroupStatuses,
 	}
 }
 
@@ -186,7 +184,6 @@ func (hc *MultiProviderHealthChecker) CheckProviderHealth(groupID string) *Provi
 			GroupID:   groupID,
 			Enabled:   false,
 			Healthy:   false,
-			LastCheck: time.Now(),
 			LastError: "Group not found",
 		}
 	}
@@ -197,7 +194,6 @@ func (hc *MultiProviderHealthChecker) CheckProviderHealth(groupID string) *Provi
 		ProviderType: group.ProviderType,
 		BaseURL:      group.BaseURL,
 		Enabled:      group.Enabled,
-		LastCheck:    time.Now(),
 	}
 
 	if !group.Enabled {
@@ -229,9 +225,7 @@ func (hc *MultiProviderHealthChecker) CheckProviderHealth(groupID string) *Provi
 	}
 
 	// 执行实际的健康检查
-	startTime := time.Now()
 	err := hc.performProviderHealthCheck(groupID, group)
-	status.ResponseTime = time.Since(startTime)
 
 	if err != nil {
 		// 检查是否是配额限制错误
@@ -310,9 +304,9 @@ func (hc *MultiProviderHealthChecker) Stop() {
 	}
 }
 
-// performHealthCheck 执行健康检查
-func (hc *MultiProviderHealthChecker) performHealthCheck() {
-	log.Println("Performing multi-provider health check...")
+// PerformHealthCheck 手动执行健康检查（移除了定时逻辑）
+func (hc *MultiProviderHealthChecker) PerformHealthCheck() {
+	log.Println("手动执行多提供商健康检查...")
 
 	hc.mutex.Lock()
 	defer hc.mutex.Unlock()
@@ -363,7 +357,20 @@ func (hc *MultiProviderHealthChecker) performHealthCheck() {
 		}
 	}
 
-	log.Printf("Health check completed: %d/%d provider groups healthy", healthy, total)
+	log.Printf("手动健康检查完成: %d/%d 个提供商分组健康", healthy, total)
+}
+
+// PerformInitialHealthCheck 首次添加分组时执行健康检查
+func (hc *MultiProviderHealthChecker) PerformInitialHealthCheck(groupID string) {
+	log.Printf("为新分组 %s 执行初始健康检查", groupID)
+
+	hc.mutex.Lock()
+	defer hc.mutex.Unlock()
+
+	status := hc.CheckProviderHealth(groupID)
+	hc.healthStatuses[groupID] = status
+
+	log.Printf("分组 %s 初始健康检查完成: %t", groupID, status.Healthy)
 }
 
 // IncrementRequestCount 增加请求计数
@@ -512,5 +519,5 @@ func (hc *MultiProviderHealthChecker) RemoveGroup(groupID string) {
 	defer hc.mutex.Unlock()
 
 	delete(hc.healthStatuses, groupID)
-	log.Printf("已从健康检查器中移除分组: %s", groupID)
+	// log.Printf("已从健康检查器中移除分组: %s", groupID)
 }

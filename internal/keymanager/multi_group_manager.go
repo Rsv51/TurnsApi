@@ -190,7 +190,7 @@ func (gkm *GroupKeyManager) ReportError(apiKey string, errorMsg string) {
 		status.LastError = errorMsg
 		status.LastErrorTime = time.Now()
 
-		log.Printf("密钥 %s (分组: %s) 发生错误: %s (错误次数: %d)", 
+		log.Printf("密钥 %s (分组: %s) 发生错误: %s (错误次数: %d)",
 			gkm.maskKey(apiKey), gkm.groupID, errorMsg, status.ErrorCount)
 
 		// 如果错误次数过多，可以考虑暂时禁用密钥
@@ -222,7 +222,7 @@ func (gkm *GroupKeyManager) GetGroupInfo() map[string]interface{} {
 
 	activeCount := 0
 	totalCount := len(gkm.keys)
-	
+
 	for _, status := range gkm.keyStatuses {
 		if status.IsActive {
 			activeCount++
@@ -253,11 +253,11 @@ func randomInt(max int) int {
 
 // MultiGroupKeyManager 多分组密钥管理器
 type MultiGroupKeyManager struct {
-	config           *internal.Config
-	groupManagers    map[string]*GroupKeyManager
-	mutex            sync.RWMutex
-	ctx              context.Context
-	cancel           context.CancelFunc
+	config        *internal.Config
+	groupManagers map[string]*GroupKeyManager
+	mutex         sync.RWMutex
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 // NewMultiGroupKeyManager 创建多分组密钥管理器
@@ -279,7 +279,8 @@ func NewMultiGroupKeyManager(config *internal.Config) *MultiGroupKeyManager {
 		}
 	}
 
-	// 移除了定时健康检查
+	// 完全移除定时健康检查逻辑，改为基于实际请求结果的实时状态更新
+	log.Printf("多分组密钥管理器初始化完成，已移除定时健康检查")
 
 	return mgkm
 }
@@ -389,7 +390,51 @@ func (mgkm *MultiGroupKeyManager) UpdateGroupConfig(groupID string, group *inter
 	return nil
 }
 
-// 移除了定时健康检查方法
+// UpdateKeyStatus 实时更新密钥状态（基于实际请求结果）
+func (mgkm *MultiGroupKeyManager) UpdateKeyStatus(groupID, apiKey string, isSuccess bool, errorMsg string) {
+	mgkm.mutex.RLock()
+	groupManager, exists := mgkm.groupManagers[groupID]
+	mgkm.mutex.RUnlock()
+
+	if exists {
+		if isSuccess {
+			groupManager.ReportSuccess(apiKey)
+		} else {
+			groupManager.ReportError(apiKey, errorMsg)
+		}
+	}
+}
+
+// GetKeyHealthStatus 获取密钥健康状态统计
+func (mgkm *MultiGroupKeyManager) GetKeyHealthStatus() map[string]interface{} {
+	mgkm.mutex.RLock()
+	defer mgkm.mutex.RUnlock()
+
+	stats := make(map[string]interface{})
+	totalKeys := 0
+	totalActiveKeys := 0
+
+	for groupID, groupManager := range mgkm.groupManagers {
+		groupInfo := groupManager.GetGroupInfo()
+		totalKeys += groupInfo["total_keys"].(int)
+		totalActiveKeys += groupInfo["active_keys"].(int)
+
+		stats[groupID] = map[string]interface{}{
+			"group_name":   groupInfo["group_name"],
+			"total_keys":   groupInfo["total_keys"],
+			"active_keys":  groupInfo["active_keys"],
+			"key_statuses": groupManager.GetKeyStatuses(),
+		}
+	}
+
+	stats["summary"] = map[string]interface{}{
+		"total_keys":        totalKeys,
+		"total_active_keys": totalActiveKeys,
+		"total_groups":      len(mgkm.groupManagers),
+	}
+
+	return stats
+}
 
 // Close 关闭管理器
 func (mgkm *MultiGroupKeyManager) Close() {

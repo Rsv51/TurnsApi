@@ -58,7 +58,7 @@ type Manager struct {
 	keys           map[string]*ProxyKey
 	groupSelectors map[string]*GroupSelector // 每个代理密钥的分组选择器
 	requestLogger  *logger.RequestLogger
-	configProvider ConfigProvider            // 配置提供者，用于获取启用的分组
+	configProvider ConfigProvider // 配置提供者，用于获取启用的分组
 	mu             sync.RWMutex
 }
 
@@ -129,6 +129,7 @@ func (m *Manager) loadKeysFromDB() error {
 			AllowedGroups: dbKey.AllowedGroups,
 			CreatedAt:     dbKey.CreatedAt,
 			IsActive:      dbKey.IsActive,
+			UsageCount:    dbKey.UsageCount, // 添加使用次数字段
 		}
 
 		// 解析分组选择配置
@@ -178,8 +179,6 @@ func (m *Manager) loadKeysFromDB() error {
 	log.Printf("Successfully loaded %d proxy keys from database", len(m.keys))
 	return nil
 }
-
-
 
 // GenerateKey 生成新的代理API密钥
 func (m *Manager) GenerateKey(name, description string, allowedGroups []string) (*ProxyKey, error) {
@@ -365,10 +364,10 @@ func (m *Manager) UpdateUsage(keyStr string) {
 			key.LastUsed = time.Now()
 			key.UsageCount++
 
-			// 更新数据库中的最后使用时间
+			// 更新数据库中的使用次数和最后使用时间
 			if m.requestLogger != nil {
-				if err := m.requestLogger.UpdateProxyKeyLastUsed(key.ID); err != nil {
-					log.Printf("Failed to update proxy key last used time in database: %v", err)
+				if err := m.requestLogger.UpdateProxyKeyUsage(key.ID); err != nil {
+					log.Printf("Failed to update proxy key usage in database: %v", err)
 				}
 			}
 			break

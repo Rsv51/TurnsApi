@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"turnsapi/internal"
+	"turnsapi/internal/database"
 	"turnsapi/internal/keymanager"
 	"turnsapi/internal/logger"
 	"turnsapi/internal/providers"
@@ -29,6 +30,7 @@ type MultiProviderProxy struct {
 	providerRouter  *router.ProviderRouter
 	requestLogger   *logger.RequestLogger
 	rpmLimiter      *ratelimit.RPMLimiter
+	database        *database.GroupsDB
 }
 
 // NewMultiProviderProxy 创建多提供商代理
@@ -71,21 +73,24 @@ func NewMultiProviderProxyWithProxyKey(
 	proxyKeyManager *proxykey.Manager,
 	requestLogger *logger.RequestLogger,
 ) *MultiProviderProxy {
-	// 创建提供商管理器
 	factory := providers.NewDefaultProviderFactory()
 	providerManager := providers.NewProviderManager(factory)
-
-	// 创建带代理密钥管理器的提供商路由器
 	providerRouter := router.NewProviderRouterWithProxyKey(config, providerManager, proxyKeyManager)
 
-	// 创建RPM限制器并初始化分组限制
+	// 创建RPM限制器
 	rpmLimiter := ratelimit.NewRPMLimiter()
-	if config.UserGroups != nil {
-		for groupID, group := range config.UserGroups {
-			if group.RPMLimit > 0 {
-				rpmLimiter.SetLimit(groupID, group.RPMLimit)
-			}
+
+	// 为每个分组设置RPM限制
+	for groupID, group := range config.UserGroups {
+		if group.RPMLimit > 0 {
+			rpmLimiter.SetLimit(groupID, group.RPMLimit)
 		}
+	}
+
+	// 初始化数据库连接
+	database, err := database.NewGroupsDB(config.Database.Path)
+	if err != nil {
+		log.Printf("Failed to initialize database for proxy: %v", err)
 	}
 
 	return &MultiProviderProxy{
@@ -96,6 +101,7 @@ func NewMultiProviderProxyWithProxyKey(
 		providerRouter:  providerRouter,
 		requestLogger:   requestLogger,
 		rpmLimiter:      rpmLimiter,
+		database:        database,
 	}
 }
 
@@ -313,47 +319,76 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 	routeReq *router.RouteRequest,
 	startTime time.Time,
 ) bool {
-	const maxRetries = 3
+	// 智能故障转移：优先在分组内重试，然后跨分组重试
+	return p.handleRequestWithSmartFailover(c, req, routeReq, startTime)
+}
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// 获取路由结果
-		routeResult, err := p.providerRouter.RouteWithRetry(routeReq)
-		if err != nil {
-			log.Printf("Failed to route request (attempt %d/%d): %v", attempt+1, maxRetries, err)
-			if attempt == maxRetries-1 {
-				// 最后一次尝试失败
-				return false
-			}
-			continue
-		}
+// handleRequestWithSmartFailover 实现智能故障转移机制
+func (p *MultiProviderProxy) handleRequestWithSmartFailover(
+	c *gin.Context,
+	req *providers.ChatCompletionRequest,
+	routeReq *router.RouteRequest,
+	startTime time.Time,
+) bool {
+	// 获取初始路由结果
+	routeResult, err := p.providerRouter.RouteWithRetry(routeReq)
+	if err != nil {
+		log.Printf("Failed to route request: %v", err)
+		return false
+	}
 
-		// 检查RPM限制
-		if !p.rpmLimiter.Allow(routeResult.GroupID) {
-			// log.Printf("RPM limit exceeded for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
+	// 步骤1：在选中的分组内尝试所有可用密钥
+	success := p.tryGroupWithAllKeys(c, req, routeResult, startTime)
+	if success {
+		return true
+	}
 
-			// 如果是最后一次尝试，返回限流错误
-			if attempt == maxRetries-1 {
-				c.JSON(http.StatusTooManyRequests, gin.H{
-					"error": gin.H{
-						"message": "Rate limit exceeded for the selected provider group",
-						"type":    "rate_limit_error",
-						"code":    "rpm_limit_exceeded",
-					},
-				})
-				return false
-			}
-			continue
-		}
+	// 步骤2：如果分组内所有密钥都失败，尝试其他允许的分组
+	log.Printf("分组 %s 内所有密钥均失败，尝试故障转移到其他分组", routeResult.GroupID)
+	return p.tryFailoverToOtherGroups(c, req, routeReq, routeResult.GroupID, startTime)
+}
 
-		// 获取API密钥
-		apiKey, err := p.keyManager.GetNextKeyForGroup(routeResult.GroupID)
-		if err != nil {
-			log.Printf("Failed to get API key for group %s (attempt %d/%d): %v", routeResult.GroupID, attempt+1, maxRetries, err)
-			if attempt == maxRetries-1 {
-				return false
-			}
-			continue
-		}
+// tryGroupWithAllKeys 在指定分组内尝试所有可用密钥
+func (p *MultiProviderProxy) tryGroupWithAllKeys(
+	c *gin.Context,
+	req *providers.ChatCompletionRequest,
+	routeResult *router.RouteResult,
+	startTime time.Time,
+) bool {
+	// 检查RPM限制
+	if !p.rpmLimiter.Allow(routeResult.GroupID) {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": gin.H{
+				"message": "Rate limit exceeded for the selected provider group",
+				"type":    "rate_limit_error",
+				"code":    "rpm_limit_exceeded",
+			},
+		})
+		return false
+	}
+
+	// 获取分组的所有可用密钥状态
+	groupStatus, exists := p.keyManager.GetGroupStatus(routeResult.GroupID)
+	if !exists {
+		log.Printf("分组 %s 不存在或未启用", routeResult.GroupID)
+		return false
+	}
+
+	groupInfo := groupStatus.(map[string]interface{})
+	keyStatuses, ok := groupInfo["key_statuses"].(map[string]*keymanager.KeyStatus)
+	if !ok {
+		log.Printf("无法获取分组 %s 的密钥状态", routeResult.GroupID)
+		return false
+	}
+
+	// 按优先级排序密钥：活跃且有效的密钥优先
+	sortedKeys := p.sortKeysByPriority(keyStatuses)
+
+	log.Printf("分组 %s 内开始尝试 %d 个可用密钥", routeResult.GroupID, len(sortedKeys))
+
+	// 依次尝试每个密钥
+	for i, apiKey := range sortedKeys {
+		log.Printf("尝试分组 %s 内第 %d/%d 个密钥: %s", routeResult.GroupID, i+1, len(sortedKeys), p.maskKey(apiKey))
 
 		// 更新提供商配置中的API密钥
 		p.providerRouter.UpdateProviderConfig(routeResult.ProviderConfig, apiKey)
@@ -361,19 +396,163 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 		// 尝试处理请求
 		var success bool
 		if req.Stream {
-			success = p.handleStreamingRequestWithRetry(c, req, routeResult, apiKey, startTime)
+			success = p.handleStreamingRequest(c, req, routeResult, apiKey, startTime)
 		} else {
-			success = p.handleNonStreamingRequestWithRetry(c, req, routeResult, apiKey, startTime)
+			success = p.handleNonStreamingRequest(c, req, routeResult, apiKey, startTime)
 		}
 
 		if success {
+			log.Printf("分组 %s 密钥 %s 请求成功", routeResult.GroupID, p.maskKey(apiKey))
+			// 报告成功使用
+			p.keyManager.ReportSuccess(routeResult.GroupID, apiKey)
+			// 实时更新数据库状态
+			p.updateKeyStatusInDatabase(routeResult.GroupID, apiKey, true, "")
 			return true
 		} else {
-			log.Printf("Request failed for group %s (attempt %d/%d)", routeResult.GroupID, attempt+1, maxRetries)
+			log.Printf("分组 %s 密钥 %s 请求失败，尝试下一个", routeResult.GroupID, p.maskKey(apiKey))
+			// 报告使用失败
+			p.keyManager.ReportError(routeResult.GroupID, apiKey, "请求失败")
+			// 实时更新数据库状态
+			p.updateKeyStatusInDatabase(routeResult.GroupID, apiKey, false, "请求失败")
 		}
 	}
 
+	log.Printf("分组 %s 内所有 %d 个密钥均已尝试，全部失败", routeResult.GroupID, len(sortedKeys))
 	return false
+}
+
+// tryFailoverToOtherGroups 故障转移到其他允许的分组
+func (p *MultiProviderProxy) tryFailoverToOtherGroups(
+	c *gin.Context,
+	req *providers.ChatCompletionRequest,
+	routeReq *router.RouteRequest,
+	failedGroupID string,
+	startTime time.Time,
+) bool {
+	// 获取支持该模型的所有分组
+	candidateGroups := p.providerRouter.GetGroupsForModel(req.Model, routeReq.AllowedGroups)
+
+	// 移除已经失败的分组
+	var failoverGroups []string
+	for _, groupID := range candidateGroups {
+		if groupID != failedGroupID {
+			failoverGroups = append(failoverGroups, groupID)
+		}
+	}
+
+	if len(failoverGroups) == 0 {
+		log.Printf("没有其他可用分组进行故障转移")
+		return false
+	}
+
+	log.Printf("开始故障转移，尝试 %d 个其他分组: %v", len(failoverGroups), failoverGroups)
+
+	// 依次尝试每个备选分组
+	for i, groupID := range failoverGroups {
+		log.Printf("故障转移尝试第 %d/%d 个分组: %s", i+1, len(failoverGroups), groupID)
+
+		// 为该分组创建新的路由请求
+		failoverRouteReq := &router.RouteRequest{
+			Model:         req.Model,
+			ProviderGroup: groupID,
+			AllowedGroups: routeReq.AllowedGroups,
+			ProxyKeyID:    routeReq.ProxyKeyID,
+		}
+
+		// 获取该分组的路由结果
+		routeResult, err := p.providerRouter.RouteWithRetry(failoverRouteReq)
+		if err != nil {
+			log.Printf("故障转移到分组 %s 失败: %v", groupID, err)
+			continue
+		}
+
+		// 在该分组内尝试所有密钥
+		success := p.tryGroupWithAllKeys(c, req, routeResult, startTime)
+		if success {
+			log.Printf("故障转移到分组 %s 成功", groupID)
+			return true
+		}
+
+		log.Printf("故障转移到分组 %s 失败，尝试下一个", groupID)
+	}
+
+	log.Printf("所有故障转移尝试均失败，请求最终失败")
+	return false
+}
+
+// sortKeysByPriority 按优先级排序密钥
+func (p *MultiProviderProxy) sortKeysByPriority(keyStatuses map[string]*keymanager.KeyStatus) []string {
+	type keyPriority struct {
+		key      string
+		priority int
+		lastUsed time.Time
+	}
+
+	var priorities []keyPriority
+
+	for key, status := range keyStatuses {
+		if !status.IsActive {
+			continue // 跳过非活跃密钥
+		}
+
+		priority := 0
+
+		// 有效的密钥优先级更高
+		if status.IsValid != nil && *status.IsValid {
+			priority += 100
+		}
+
+		// 错误较少的密钥优先级更高
+		priority -= int(status.ErrorCount)
+
+		// 最近使用较少的密钥优先级更高（负载均衡）
+		if time.Since(status.LastUsed) > time.Hour {
+			priority += 10
+		}
+
+		priorities = append(priorities, keyPriority{
+			key:      key,
+			priority: priority,
+			lastUsed: status.LastUsed,
+		})
+	}
+
+	// 按优先级排序（高优先级在前）
+	for i := 0; i < len(priorities)-1; i++ {
+		for j := i + 1; j < len(priorities); j++ {
+			if priorities[i].priority < priorities[j].priority {
+				priorities[i], priorities[j] = priorities[j], priorities[i]
+			}
+		}
+	}
+
+	var sortedKeys []string
+	for _, p := range priorities {
+		sortedKeys = append(sortedKeys, p.key)
+	}
+
+	return sortedKeys
+}
+
+// updateKeyStatusInDatabase 实时更新数据库中的密钥状态
+func (p *MultiProviderProxy) updateKeyStatusInDatabase(groupID, apiKey string, isSuccess bool, errorMsg string) {
+	if p.database == nil {
+		return
+	}
+
+	go func() {
+		if err := p.database.UpdateAPIKeyUsageStats(groupID, apiKey, isSuccess, 0, errorMsg); err != nil {
+			log.Printf("Failed to update key status in database: %v", err)
+		}
+	}()
+}
+
+// maskKey 掩码显示密钥
+func (p *MultiProviderProxy) maskKey(key string) string {
+	if len(key) <= 8 {
+		return "****"
+	}
+	return key[:4] + "****" + key[len(key)-4:]
 }
 
 // handleNonStreamingRequestWithRetry 处理非流式请求（支持重试）
@@ -609,6 +788,7 @@ func (p *MultiProviderProxy) handleStreamingRequest(
 
 // getProxyKeyInfo 获取代理密钥信息
 func (p *MultiProviderProxy) getProxyKeyInfo(c *gin.Context) (string, string) {
+	// 首先尝试从上下文中获取已设置的代理密钥信息
 	if name, exists := c.Get("proxy_key_name"); exists {
 		if nameStr, ok := name.(string); ok {
 			if id, exists := c.Get("proxy_key_id"); exists {
@@ -619,6 +799,23 @@ func (p *MultiProviderProxy) getProxyKeyInfo(c *gin.Context) (string, string) {
 			return nameStr, "unknown"
 		}
 	}
+
+	// 如果上下文中没有，尝试从key_info中获取
+	if keyInfo, exists := c.Get("key_info"); exists {
+		if proxyKey, ok := keyInfo.(*logger.ProxyKey); ok {
+			// 设置到上下文中以便后续使用
+			c.Set("proxy_key_name", proxyKey.Name)
+			c.Set("proxy_key_id", proxyKey.ID)
+			
+			// 更新代理密钥使用次数
+			if p.proxyKeyManager != nil {
+				p.proxyKeyManager.UpdateUsage(proxyKey.Key)
+			}
+			
+			return proxyKey.Name, proxyKey.ID
+		}
+	}
+
 	return "Unknown", "unknown"
 }
 

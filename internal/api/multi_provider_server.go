@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,12 +60,10 @@ func (cma *configManagerAdapter) GetEnabledGroups() map[string]interface{} {
 func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *keymanager.MultiGroupKeyManager) *MultiProviderServer {
 	config := configManager.GetConfig()
 
-	log.Printf("=== 开始创建MultiProviderServer ===")
-	log.Printf("配置的服务器模式: '%s', 日志级别: '%s'", config.Server.Mode, config.Logging.Level)
-	log.Printf("!!! 这是修改后的 NewMultiProviderServer 函数 !!!")
+	log.Printf("=== 快速创建MultiProviderServer ===")
+	log.Printf("配置的服务器模式: '%s'", config.Server.Mode)
 
-	// 设置Gin模式
-	// 优先使用Server.Mode配置，如果未设置则根据日志级别判断
+	// 设置Gin模式（快速设置）
 	var ginMode string
 	switch config.Server.Mode {
 	case "debug":
@@ -74,29 +73,19 @@ func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *k
 	case "test":
 		ginMode = gin.TestMode
 	default:
-		// 向后兼容：如果Mode未设置或无效，则根据日志级别判断
-		if config.Logging.Level == "debug" {
-			ginMode = gin.DebugMode
-		} else {
-			ginMode = gin.ReleaseMode
-		}
+		ginMode = gin.ReleaseMode // 默认生产模式
 	}
 
-	// 设置环境变量（Gin优先检查环境变量）
 	os.Setenv("GIN_MODE", ginMode)
 	gin.SetMode(ginMode)
-	log.Printf("Gin模式设置为: %s", ginMode)
 
 	// 创建请求日志记录器
-	log.Printf("Creating request logger with database path: %s", config.Database.Path)
 	requestLogger, err := logger.NewRequestLogger(config.Database.Path)
 	if err != nil {
 		log.Fatalf("Failed to create request logger: %v", err)
 	}
-	log.Printf("Request logger created successfully")
 
 	// 创建代理密钥管理器
-	// 创建配置提供者适配器
 	configProvider := &configManagerAdapter{configManager: configManager}
 	proxyKeyManager := proxykey.NewManagerWithConfig(requestLogger, configProvider)
 
@@ -114,10 +103,14 @@ func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *k
 	// 创建多提供商代理
 	server.proxy = proxy.NewMultiProviderProxyWithProxyKey(config, keyManager, proxyKeyManager, requestLogger)
 
-	// 创建健康检查器
-	factory := providers.NewDefaultProviderFactory()
-	providerManager := providers.NewProviderManager(factory)
-	server.healthChecker = health.NewMultiProviderHealthChecker(config, keyManager, providerManager, server.proxy.GetProviderRouter())
+	// 延迟初始化健康检查器（异步创建，避免启动时网络检查）
+	go func() {
+		time.Sleep(5 * time.Second) // 延迟5秒初始化
+		log.Printf("开始异步初始化健康检查器...")
+		factory := providers.NewDefaultProviderFactory()
+		providerManager := providers.NewProviderManager(factory)
+		server.healthChecker = health.NewMultiProviderHealthChecker(config, keyManager, providerManager, server.proxy.GetProviderRouter())
+	}()
 
 	// 设置代理密钥管理器到认证管理器
 	server.authManager.SetProxyKeyManager(server.proxyKeyManager)
@@ -128,6 +121,7 @@ func NewMultiProviderServer(configManager *internal.ConfigManager, keyManager *k
 	// 设置路由
 	server.setupRoutes()
 
+	// log.Printf("MultiProviderServer快速创建完成")
 	return server
 }
 
@@ -154,7 +148,6 @@ func (s *MultiProviderServer) setupMiddleware() {
 
 // setupRoutes 设置路由
 func (s *MultiProviderServer) setupRoutes() {
-	log.Printf("=== 开始设置路由 ===")
 	// API路由（需要API密钥认证）
 	api := s.router.Group("/v1")
 	api.Use(s.authManager.APIKeyAuthMiddleware())
@@ -232,6 +225,9 @@ func (s *MultiProviderServer) setupRoutes() {
 		admin.DELETE("/proxy-keys/:id", s.handleDeleteProxyKey)
 		admin.GET("/proxy-keys/:id/group-stats", s.handleProxyKeyGroupStats)
 
+		// 健康检查手动刷新
+		admin.POST("/health/refresh", s.handleRefreshHealth)
+		admin.POST("/health/refresh/:groupId", s.handleRefreshGroupHealth)
 
 		// 分组管理
 		admin.GET("/groups/manage", s.handleGroupsManage)
@@ -800,13 +796,14 @@ func (s *MultiProviderServer) handleStatus(c *gin.Context) {
 	systemHealth := s.healthChecker.GetSystemHealth()
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":         systemHealth.Status,
-		"timestamp":      time.Now(),
-		"uptime":         systemHealth.Uptime,
-		"total_groups":   systemHealth.TotalGroups,
-		"healthy_groups": systemHealth.HealthyGroups,
-		"total_keys":     systemHealth.TotalKeys,
-		"active_keys":    systemHealth.ActiveKeys,
+		"status":          systemHealth.Status,
+		"timestamp":       time.Now(),
+		"uptime":          systemHealth.Uptime,
+		"total_groups":    systemHealth.TotalGroups,
+		"enabled_groups":  systemHealth.EnabledGroups,
+		"disabled_groups": systemHealth.DisabledGroups,
+		"total_keys":      systemHealth.TotalKeys,
+		"active_keys":     systemHealth.ActiveKeys,
 	})
 }
 
@@ -834,8 +831,6 @@ func (s *MultiProviderServer) handleGroupsStatus(c *gin.Context) {
 		// 获取健康状态，如果没有健康检查记录则默认为健康
 		if healthStatus, exists := s.healthChecker.GetProviderHealth(groupID); exists {
 			groupInfo["healthy"] = healthStatus.Healthy
-			groupInfo["last_check"] = healthStatus.LastCheck
-			groupInfo["response_time"] = healthStatus.ResponseTime
 			groupInfo["last_error"] = healthStatus.LastError
 		} else {
 			// 新分组默认为健康状态
@@ -2058,12 +2053,54 @@ func (s *MultiProviderServer) handleExportLogs(c *gin.Context) {
 	}
 }
 
-// handleProxyKeys 处理代理密钥列表查询（支持分页和搜索）
+// sortProxyKeys 对代理密钥列表进行排序
+func (s *MultiProviderServer) sortProxyKeys(keys []*proxykey.ProxyKey, sortBy string) {
+	switch sortBy {
+	case "created_time_desc":
+		// 按创建时间倒序排列（默认）
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].CreatedAt.After(keys[j].CreatedAt)
+		})
+	case "created_time_asc":
+		// 按创建时间正序排列
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].CreatedAt.Before(keys[j].CreatedAt)
+		})
+	case "usage_count_desc":
+		// 按使用次数最多排列
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].UsageCount > keys[j].UsageCount
+		})
+	case "usage_count_asc":
+		// 按使用次数最少排列
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].UsageCount < keys[j].UsageCount
+		})
+	case "name_asc":
+		// 按名称正序排列
+		sort.Slice(keys, func(i, j int) bool {
+			return strings.ToLower(keys[i].Name) < strings.ToLower(keys[j].Name)
+		})
+	case "name_desc":
+		// 按名称倒序排列
+		sort.Slice(keys, func(i, j int) bool {
+			return strings.ToLower(keys[i].Name) > strings.ToLower(keys[j].Name)
+		})
+	default:
+		// 默认按创建时间倒序排列
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].CreatedAt.After(keys[j].CreatedAt)
+		})
+	}
+}
+
+// handleProxyKeys 处理代理密钥列表查询（支持分页、搜索和排序）
 func (s *MultiProviderServer) handleProxyKeys(c *gin.Context) {
 	// 获取查询参数
 	page := 1
 	pageSize := 10
 	search := c.Query("search")
+	sortBy := c.DefaultQuery("sort_by", "created_time_desc") // 默认按创建时间倒序
 
 	if pageStr := c.Query("page"); pageStr != "" {
 		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
@@ -2096,6 +2133,9 @@ func (s *MultiProviderServer) handleProxyKeys(c *gin.Context) {
 	} else {
 		filteredKeys = allKeys
 	}
+
+	// 排序处理
+	s.sortProxyKeys(filteredKeys, sortBy)
 
 	// 计算分页
 	total := len(filteredKeys)
@@ -2131,18 +2171,18 @@ func (s *MultiProviderServer) handleProxyKeys(c *gin.Context) {
 			"has_prev":    page > 1,
 			"has_next":    page < totalPages,
 		},
-		"search": search,
+		"search":  search,
+		"sort_by": sortBy,
 	})
 }
-
 
 // handleGenerateProxyKey 处理生成代理密钥
 func (s *MultiProviderServer) handleGenerateProxyKey(c *gin.Context) {
 	var req struct {
-		Name                 string                           `json:"name" binding:"required"`
-		Description          string                           `json:"description"`
-		AllowedGroups        []string                         `json:"allowedGroups"`        // 允许访问的分组ID列表
-		GroupSelectionConfig *proxykey.GroupSelectionConfig  `json:"groupSelectionConfig"` // 分组选择配置
+		Name                 string                         `json:"name" binding:"required"`
+		Description          string                         `json:"description"`
+		AllowedGroups        []string                       `json:"allowedGroups"`        // 允许访问的分组ID列表
+		GroupSelectionConfig *proxykey.GroupSelectionConfig `json:"groupSelectionConfig"` // 分组选择配置
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2171,10 +2211,10 @@ func (s *MultiProviderServer) handleUpdateProxyKey(c *gin.Context) {
 	keyID := c.Param("id")
 
 	var req struct {
-		Name                 string                          `json:"name" binding:"required"`
-		Description          string                          `json:"description"`
-		IsActive             *bool                           `json:"is_active"`
-		AllowedGroups        []string                        `json:"allowedGroups"`        // 保持与生成时一致的字段名
+		Name                 string                         `json:"name" binding:"required"`
+		Description          string                         `json:"description"`
+		IsActive             *bool                          `json:"is_active"`
+		AllowedGroups        []string                       `json:"allowedGroups"`        // 保持与生成时一致的字段名
 		GroupSelectionConfig *proxykey.GroupSelectionConfig `json:"groupSelectionConfig"` // 分组选择配置
 	}
 
@@ -2286,8 +2326,6 @@ func (s *MultiProviderServer) handleGroupsManage(c *gin.Context) {
 		// 获取健康状态，如果没有健康检查记录则默认为健康
 		if healthStatus, exists := s.healthChecker.GetProviderHealth(groupID); exists {
 			groupInfo["healthy"] = healthStatus.Healthy
-			groupInfo["last_check"] = healthStatus.LastCheck
-			groupInfo["response_time"] = healthStatus.ResponseTime
 			groupInfo["last_error"] = healthStatus.LastError
 		} else {
 			// 新分组默认为健康状态
@@ -2824,6 +2862,9 @@ func (s *MultiProviderServer) handleGeminiNativeChat(c *gin.Context) {
 	c.Set("force_native_response", true)
 	c.Set("target_provider", "gemini")
 
+	// 确保代理密钥信息正确传递到上下文中
+	s.ensureProxyKeyInfoInContext(c)
+
 	// 调用标准聊天完成处理
 	s.handleChatCompletionsWithRequest(c, standardReq)
 }
@@ -2870,6 +2911,9 @@ func (s *MultiProviderServer) handleGeminiNativeStreamChat(c *gin.Context) {
 	standardReq.Stream = true
 	c.Set("force_native_response", true)
 	c.Set("target_provider", "gemini")
+
+	// 确保代理密钥信息正确传递到上下文中
+	s.ensureProxyKeyInfoInContext(c)
 
 	// 调用标准聊天完成处理
 	s.handleChatCompletionsWithRequest(c, standardReq)
@@ -3018,6 +3062,28 @@ func (s *MultiProviderServer) convertGeminiNativeToStandard(nativeReq map[string
 	return standardReq, nil
 }
 
+// ensureProxyKeyInfoInContext 确保代理密钥信息正确传递到上下文中
+func (s *MultiProviderServer) ensureProxyKeyInfoInContext(c *gin.Context) {
+	// 检查是否已经有代理密钥信息
+	if _, exists := c.Get("proxy_key_name"); exists {
+		return // 已经有了，不需要重复设置
+	}
+
+	// 从key_info中获取代理密钥信息
+	if keyInfo, exists := c.Get("key_info"); exists {
+		if proxyKey, ok := keyInfo.(*logger.ProxyKey); ok {
+			// 设置代理密钥信息到上下文中
+			c.Set("proxy_key_name", proxyKey.Name)
+			c.Set("proxy_key_id", proxyKey.ID)
+			
+			// 更新代理密钥使用次数
+			if s.proxyKeyManager != nil {
+				s.proxyKeyManager.UpdateUsage(proxyKey.Key)
+			}
+		}
+	}
+}
+
 // handleChatCompletionsWithRequest 使用指定请求处理聊天完成
 func (s *MultiProviderServer) handleChatCompletionsWithRequest(c *gin.Context, req *providers.ChatCompletionRequest) {
 	// 将请求设置到上下文中，这样代理可以直接使用
@@ -3113,6 +3179,58 @@ func (s *MultiProviderServer) handleGeminiNativeMethodDispatch(c *gin.Context) {
 }
 
 // geminiAPIKeyAuthMiddleware Gemini API密钥认证中间件，支持x-goog-api-key头
+// handleRefreshHealth 手动刷新所有分组的健康状态
+func (s *MultiProviderServer) handleRefreshHealth(c *gin.Context) {
+	if s.healthChecker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "Health checker not initialized yet",
+			"status": "initializing",
+		})
+		return
+	}
+
+	log.Printf("收到手动刷新健康状态请求")
+
+	// 异步执行健康检查，避免阻塞请求
+	go s.healthChecker.PerformHealthCheck()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Health check refresh initiated",
+		"status":  "refreshing",
+	})
+}
+
+// handleRefreshGroupHealth 手动刷新指定分组的健康状态
+func (s *MultiProviderServer) handleRefreshGroupHealth(c *gin.Context) {
+	if s.healthChecker == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "Health checker not initialized yet",
+			"status": "initializing",
+		})
+		return
+	}
+
+	groupID := c.Param("groupId")
+
+	// 检查分组是否存在
+	_, exists := s.config.GetGroupByID(groupID)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Group not found"})
+		return
+	}
+
+	log.Printf("收到手动刷新分组 %s 健康状态请求", groupID)
+
+	// 异步执行指定分组的健康检查
+	go s.healthChecker.PerformInitialHealthCheck(groupID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  fmt.Sprintf("Health check refresh initiated for group %s", groupID),
+		"status":   "refreshing",
+		"group_id": groupID,
+	})
+}
+
 func (s *MultiProviderServer) geminiAPIKeyAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var apiKey string

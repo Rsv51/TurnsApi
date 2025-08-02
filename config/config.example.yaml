@@ -1,214 +1,166 @@
-# TurnsAPI Multi-Provider Configuration Example
-# 多提供商配置示例文件
+# TurnsAPI 优化配置示例
 
-# 服务器配置
 server:
   port: "8080"
   host: "0.0.0.0"
-  mode: "release"  # 服务器模式: debug, release, test (生产环境建议使用release)
+  mode: "release"  # 生产模式，提升启动速度
 
 # 认证配置
 auth:
   enabled: true
   username: "admin"
-  password: "admin123"  # 请修改为强密码
-  session_timeout: 24h
-
-# 用户分组配置 - 支持多个提供商
-user_groups:
-  # OpenAI 官方 API
-  openai_official:
-    name: "OpenAI Official"
-    provider_type: "openai"
-    base_url: "https://api.openai.com/v1"
-    enabled: true
-    timeout: 30s
-    max_retries: 3
-    rotation_strategy: "round_robin"
-    api_keys:
-      - "sk-your-openai-key-1"
-      - "sk-your-openai-key-2"
-      - "sk-your-openai-key-3"
-    models:
-      - "gpt-3.5-turbo"
-      - "gpt-3.5-turbo-16k"
-      - "gpt-4"
-      - "gpt-4-turbo"
-      - "gpt-4o"
-    headers:
-      Content-Type: "application/json"
-
-  # Azure OpenAI 服务
-  azure_openai:
-    name: "Azure OpenAI"
-    provider_type: "azure_openai"
-    base_url: "https://your-resource.openai.azure.com/openai/deployments/your-deployment"
-    api_version: "2023-12-01-preview"
-    enabled: false  # 默认禁用，需要时启用
-    timeout: 30s
-    max_retries: 3
-    rotation_strategy: "round_robin"
-    api_keys:
-      - "your-azure-openai-key"
-    models:
-      - "gpt-35-turbo"
-      - "gpt-4"
-    headers:
-      Content-Type: "application/json"
-      api-key: "your-azure-openai-key"
-
-  # Google Gemini API
-  google_gemini:
-    name: "Google Gemini"
-    provider_type: "gemini"
-    base_url: "https://generativelanguage.googleapis.com/v1beta"
-    enabled: true
-    timeout: 30s
-    max_retries: 3
-    rotation_strategy: "random"
-    api_keys:
-      - "your-gemini-api-key-1"
-      - "your-gemini-api-key-2"
-    models:
-      - "gemini-pro"
-      - "gemini-pro-vision"
-      - "gemini-1.5-pro"
-      - "gemini-1.5-flash"
-    headers:
-      Content-Type: "application/json"
-
-  # Anthropic Claude API
-  anthropic_claude:
-    name: "Anthropic Claude"
-    provider_type: "anthropic"
-    base_url: "https://api.anthropic.com"
-    api_version: "2023-06-01"
-    enabled: true
-    timeout: 30s
-    max_retries: 3
-    rotation_strategy: "least_used"
-    api_keys:
-      - "your-anthropic-key-1"
-      - "your-anthropic-key-2"
-    models:
-      - "claude-3-sonnet-20240229"
-      - "claude-3-opus-20240229"
-      - "claude-3-haiku-20240307"
-      - "claude-3-5-sonnet-20241022"
-    headers:
-      Content-Type: "application/json"
-
-  # OpenRouter (兼容 OpenAI 格式)
-  openrouter:
-    name: "OpenRouter"
-    provider_type: "openrouter"
-    base_url: "https://openrouter.ai/api/v1"
-    enabled: true
-    timeout: 60s
-    max_retries: 3
-    rotation_strategy: "round_robin"
-    api_keys:
-      - "sk-or-your-openrouter-key-1"
-      - "sk-or-your-openrouter-key-2"
-    models: []  # 空列表表示支持所有模型
-    headers:
-      Content-Type: "application/json"
-      HTTP-Referer: "https://your-domain.com"
-      X-Title: "TurnsAPI Multi-Provider"
-
-  # 其他兼容 OpenAI 格式的服务
-  custom_openai_compatible:
-    name: "Custom OpenAI Compatible"
-    provider_type: "openai"
-    base_url: "https://your-custom-api.com/v1"
-    enabled: false  # 默认禁用
-    timeout: 30s
-    max_retries: 3
-    rotation_strategy: "round_robin"
-    api_keys:
-      - "your-custom-api-key"
-    models:
-      - "custom-model-1"
-      - "custom-model-2"
-    headers:
-      Content-Type: "application/json"
+  password: "turnsapi123"  # 生产环境请修改
+  session_timeout: "24h"
 
 # 全局设置
 global_settings:
-  default_rotation_strategy: "round_robin"
-  default_timeout: 30s
+  default_rotation_strategy: "round_robin"  # 默认轮询策略
+  default_timeout: "30s"
   default_max_retries: 3
 
-# 监控配置
+# 监控配置（不影响启动速度）
 monitoring:
   enabled: true
   metrics_endpoint: "/metrics"
   health_endpoint: "/health"
 
+# 用户分组配置 - 支持多提供商智能故障转移
+user_groups:
+  # OpenAI 官方 API
+  openai_official:
+    name: "OpenAI 官方"
+    provider_type: "openai"
+    base_url: "https://api.openai.com/v1"
+    enabled: true
+    timeout: "30s"
+    max_retries: 2
+    rotation_strategy: "least_used"  # 最少使用策略
+    rpm_limit: 60  # 每分钟60次请求限制
+    models:
+      - "gpt-3.5-turbo"
+      - "gpt-4"
+      - "gpt-4-turbo"
+      - "gpt-4o"
+    api_keys:
+      - "sk-your-openai-key-1"
+      - "sk-your-openai-key-2"
+    headers:
+      Content-Type: "application/json"
+    # 模型重命名映射
+    model_mappings:
+      "gpt-4-latest": "gpt-4"
+      "gpt-3.5": "gpt-3.5-turbo"
+    # 请求参数覆盖
+    request_params:
+      temperature: 0.7
+      max_tokens: 2000
+
+  # OpenRouter 服务
+  openrouter_main:
+    name: "OpenRouter 主要"
+    provider_type: "openai"
+    base_url: "https://openrouter.ai/api/v1"
+    enabled: true
+    timeout: "45s"
+    max_retries: 3
+    rotation_strategy: "round_robin"
+    rpm_limit: 120  # 更高的请求限制
+    api_keys:
+      - "sk-or-v1-your-key-1"
+      - "sk-or-v1-your-key-2"
+      - "sk-or-v1-your-key-3"
+    headers:
+      Content-Type: "application/json"
+      HTTP-Referer: "https://your-domain.com"
+      X-Title: "TurnsAPI"
+
+  # Google Gemini
+  gemini_pro:
+    name: "Google Gemini"
+    provider_type: "gemini"
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
+    enabled: true
+    timeout: "60s"
+    max_retries: 2
+    rotation_strategy: "random"
+    rpm_limit: 30
+    models:
+      - "gemini-pro"
+      - "gemini-pro-vision"
+      - "gemini-1.5-pro"
+    api_keys:
+      - "your-gemini-api-key-1"
+      - "your-gemini-api-key-2"
+    use_native_response: false  # 是否使用原生响应格式
+    headers:
+      Content-Type: "application/json"
+
+  # Anthropic Claude
+  anthropic_claude:
+    name: "Anthropic Claude"
+    provider_type: "anthropic"
+    base_url: "https://api.anthropic.com"
+    enabled: true
+    timeout: "90s"
+    max_retries: 2
+    rotation_strategy: "least_used"
+    rpm_limit: 50
+    models:
+      - "claude-3-haiku-20240307"
+      - "claude-3-sonnet-20240229"
+      - "claude-3-opus-20240229"
+      - "claude-3-5-sonnet-20241022"
+    api_keys:
+      - "sk-ant-api03-your-key-1"
+      - "sk-ant-api03-your-key-2"
+    headers:
+      Content-Type: "application/json"
+      anthropic-version: "2023-06-01"
+
+  # 备用 OpenRouter（故障转移用）
+  openrouter_backup:
+    name: "OpenRouter 备用"
+    provider_type: "openai"
+    base_url: "https://openrouter.ai/api/v1"
+    enabled: true
+    timeout: "30s"
+    max_retries: 2
+    rotation_strategy: "round_robin"
+    rpm_limit: 60
+    api_keys:
+      - "sk-or-v1-backup-key-1"
+      - "sk-or-v1-backup-key-2"
+    headers:
+      Content-Type: "application/json"
+
+  # Azure OpenAI（企业用户）
+  azure_openai:
+    name: "Azure OpenAI"
+    provider_type: "azure_openai"
+    base_url: "https://your-resource.openai.azure.com"
+    enabled: false  # 默认禁用，需要时启用
+    timeout: "60s"
+    max_retries: 2
+    rotation_strategy: "round_robin"
+    rpm_limit: 100
+    models:
+      - "gpt-4"
+      - "gpt-35-turbo"
+    api_keys:
+      - "your-azure-api-key"
+    headers:
+      Content-Type: "application/json"
+      api-key: "your-azure-api-key"
+
 # 日志配置
 logging:
-  level: "info"
+  level: "info"  # 生产环境推荐 info
   file: "logs/turnsapi.log"
-  max_size: 100
+  max_size: 100    # MB
   max_backups: 5
-  max_age: 30
+  max_age: 30      # 天
 
-# 数据库配置
+# 数据库配置（支持实时密钥状态更新）
 database:
   path: "data/turnsapi.db"
-  retention_days: 30
-
-# ============================================
-# 向后兼容配置示例（可选）
-# 如果您有旧版配置，系统会自动转换为新格式
-# ============================================
-
-# 旧版 OpenRouter 配置（会自动转换为 user_groups）
-# openrouter:
-#   base_url: "https://openrouter.ai/api/v1"
-#   timeout: 30s
-#   max_retries: 3
-
-# 旧版 API 密钥配置（会自动转换为 user_groups）
-# api_keys:
-#   keys:
-#     - "sk-or-your-key-1"
-#     - "sk-or-your-key-2"
-#   rotation_strategy: "round_robin"
-#   health_check_interval: 60s
-
-# ============================================
-# 配置说明
-# ============================================
-
-# provider_type 支持的值:
-# - openai: OpenAI API 和兼容服务 (Azure OpenAI 等)
-# - openrouter: OpenRouter API (兼容 OpenAI 格式)
-# - gemini: Google Gemini API
-# - anthropic: Anthropic Claude API
-# - azure_openai: Azure OpenAI 服务 (实际上也是 openai 类型)
-
-# rotation_strategy 支持的值:
-# - round_robin: 轮询使用密钥
-# - random: 随机选择密钥
-# - least_used: 选择使用次数最少的密钥
-
-# 路由规则:
-# 1. 显式指定: 通过 X-Provider-Group 头部指定提供商组
-# 2. 模型匹配: 检查分组的 models 列表是否包含请求的模型
-# 3. 模式匹配: 根据模型名称自动匹配提供商类型
-#    - 包含 gpt/o1/davinci/turbo → openai 类型
-#    - 包含 claude → anthropic 类型  
-#    - 包含 gemini → gemini 类型
-# 4. 默认分组: 使用第一个启用的分组
-
-# 特殊配置说明:
-# - Gemini API: API key 会作为 URL 查询参数传递
-# - Anthropic API: 需要设置 api_version 和特殊的请求头
-# - Azure OpenAI: 需要在 base_url 中包含 deployment 信息
-
-# 安全提示:
-# 1. 请将真实的 API 密钥替换示例中的占位符
-# 2. 不要将包含真实密钥的配置文件提交到版本控制
-# 3. 建议使用环境变量或密钥管理服务来管理敏感信息
-# 4. 定期轮换 API 密钥以提高安全性
+  retention_days: 30  # 日志保留天数

@@ -152,8 +152,9 @@ func (p *GeminiProvider) ChatCompletion(ctx context.Context, req *ChatCompletion
 	}
 
 	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
+	// 但在转换为OpenAI格式时不包含思考内容
 	genConfig.ThinkingConfig = &genai.ThinkingConfig{
-		IncludeThoughts: true,  // 包含思考内容在响应中
+		IncludeThoughts: false, // 转换为OpenAI格式时不包含思考内容
 		ThinkingBudget:  nil,   // 使用默认的动态思考预算
 	}
 
@@ -223,8 +224,9 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 	}
 
 	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
+	// 但在转换为OpenAI格式时不包含思考内容
 	genConfig.ThinkingConfig = &genai.ThinkingConfig{
-		IncludeThoughts: true,  // 包含思考内容在响应中
+		IncludeThoughts: false, // 转换为OpenAI格式时不包含思考内容
 		ThinkingBudget:  nil,   // 使用默认的动态思考预算
 	}
 
@@ -258,10 +260,11 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 				continue
 			}
 
-			// 提取文本内容
+			// 提取文本内容，过滤掉思考内容
 			if len(chunk.Candidates) > 0 && len(chunk.Candidates[0].Content.Parts) > 0 {
 				for _, part := range chunk.Candidates[0].Content.Parts {
-					if part.Text != "" {
+					// 只处理非思考的文本内容
+					if part.Text != "" && !part.Thought {
 						// 转义并创建OpenAI格式的流式数据
 						escapedContent := escapeJSONString(part.Text)
 						streamData := fmt.Sprintf("data: {\"id\":\"%s\",\"object\":\"chat.completion.chunk\",\"created\":%d,\"model\":\"%s\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"%s\"},\"finish_reason\":null}]}\n\n",
@@ -348,8 +351,9 @@ func (p *GeminiProvider) ChatCompletionStreamNative(ctx context.Context, req *Ch
 	}
 
 	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
+	// 原生格式保留思考内容
 	genConfig.ThinkingConfig = &genai.ThinkingConfig{
-		IncludeThoughts: true,  // 包含思考内容在响应中
+		IncludeThoughts: true,  // 原生格式包含思考内容
 		ThinkingBudget:  nil,   // 使用默认的动态思考预算
 	}
 
@@ -560,6 +564,11 @@ func (p *GeminiProvider) HealthCheck(ctx context.Context) error {
 	genConfig := &genai.GenerateContentConfig{
 		Temperature:     func() *float32 { t := float32(0.1); return &t }(), // 健康检查使用低温度确保稳定性
 		MaxOutputTokens: int32(100),                                         // 限制输出以节省配额
+		// 健康检查不需要思考功能，保持简单
+		ThinkingConfig: &genai.ThinkingConfig{
+			IncludeThoughts: false, // 健康检查不包含思考内容
+			ThinkingBudget:  nil,
+		},
 	}
 
 	_, err := p.client.Models.GenerateContent(healthCtx, "gemini-2.5-flash", contents, genConfig)
@@ -797,8 +806,8 @@ func (p *GeminiProvider) convertGenaiToOpenAIResponse(result *genai.GenerateCont
 	// 生成响应ID
 	responseID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 
-	// 提取文本内容
-	content := result.Text()
+	// 提取文本内容，过滤掉思考内容
+	content := p.extractNonThoughtContent(result)
 
 	// 构建OpenAI格式的响应
 	openaiResp := &ChatCompletionResponse{
@@ -838,6 +847,26 @@ func (p *GeminiProvider) convertGenaiToOpenAIResponse(result *genai.GenerateCont
 	}
 
 	return openaiResp, nil
+}
+
+// extractNonThoughtContent 从Gemini响应中提取非思考内容
+func (p *GeminiProvider) extractNonThoughtContent(result *genai.GenerateContentResponse) string {
+	var content strings.Builder
+	
+	// 遍历所有候选响应
+	for _, candidate := range result.Candidates {
+		if candidate.Content != nil {
+			// 遍历内容部分，只提取非思考内容
+			for _, part := range candidate.Content.Parts {
+				// 只添加非思考的文本内容
+				if part.Text != "" && !part.Thought {
+					content.WriteString(part.Text)
+				}
+			}
+		}
+	}
+	
+	return content.String()
 }
 
 // isQuotaExceededError 检查是否是配额超限错误

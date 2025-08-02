@@ -6,25 +6,32 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"turnsapi/internal/database"
 
 	"gopkg.in/yaml.v3"
 )
 
 // KeyStatus API密钥状态
 type KeyStatus struct {
-	Key           string    `json:"key"`
-	KeyID         string    `json:"key_id,omitempty"` // 原始密钥ID，用于删除和编辑
-	Name          string    `json:"name,omitempty"`
-	Description   string    `json:"description,omitempty"`
-	IsActive      bool      `json:"is_active"`
-	LastUsed      time.Time `json:"last_used"`
-	UsageCount    int64     `json:"usage_count"`
-	ErrorCount    int64     `json:"error_count"`
-	LastError     string    `json:"last_error,omitempty"`
-	LastErrorTime time.Time `json:"last_error_time,omitempty"`
-	AllowedModels []string  `json:"allowed_models,omitempty"`
+	Key             string     `json:"key"`
+	KeyID           string     `json:"key_id,omitempty"` // 原始密钥ID，用于删除和编辑
+	Name            string     `json:"name,omitempty"`
+	Description     string     `json:"description,omitempty"`
+	IsActive        bool       `json:"is_active"`
+	IsValid         *bool      `json:"is_valid,omitempty"` // 密钥有效性状态
+	LastUsed        time.Time  `json:"last_used"`
+	LastValidated   *time.Time `json:"last_validated,omitempty"` // 最后验证时间
+	UsageCount      int64      `json:"usage_count"`
+	ErrorCount      int64      `json:"error_count"`
+	LastError       string     `json:"last_error,omitempty"`
+	LastErrorTime   time.Time  `json:"last_error_time,omitempty"`
+	ValidationError string     `json:"validation_error,omitempty"` // 验证错误信息
+	UpdatedAt       time.Time  `json:"updated_at"`                 // 状态更新时间
+	AllowedModels   []string   `json:"allowed_models,omitempty"`
 }
 
 // KeyInfo API密钥信息
@@ -38,20 +45,33 @@ type KeyInfo struct {
 
 // KeyManager API密钥管理器
 type KeyManager struct {
-	keys              []string
-	keyInfos          map[string]*KeyInfo
-	keyStatuses       map[string]*KeyStatus
-	rotationStrategy  string
-	currentIndex      int
-	mutex             sync.RWMutex
-	ctx               context.Context
-	cancel            context.CancelFunc
-	configPath        string // 配置文件路径
+	keys             []string
+	keyInfos         map[string]*KeyInfo
+	keyStatuses      map[string]*KeyStatus
+	rotationStrategy string
+	currentIndex     int
+	mutex            sync.RWMutex
+	ctx              context.Context
+	cancel           context.CancelFunc
+	configPath       string             // 配置文件路径
+	database         *database.GroupsDB // 新增：数据库连接
 }
 
 // NewKeyManager 创建新的密钥管理器
 func NewKeyManager(keys []string, rotationStrategy string, healthCheckInterval time.Duration, configPath string) *KeyManager {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// 初始化数据库连接
+	var db *database.GroupsDB
+	if configPath != "" {
+		// 从配置路径推断数据库路径
+		dbPath := "data/turnsapi.db"
+		if dbConn, err := database.NewGroupsDB(dbPath); err == nil {
+			db = dbConn
+		} else {
+			log.Printf("Failed to initialize database: %v", err)
+		}
+	}
 
 	km := &KeyManager{
 		keys:             keys,
@@ -62,6 +82,7 @@ func NewKeyManager(keys []string, rotationStrategy string, healthCheckInterval t
 		ctx:              ctx,
 		cancel:           cancel,
 		configPath:       configPath,
+		database:         db,
 	}
 
 	// 初始化密钥信息和状态
@@ -74,14 +95,18 @@ func NewKeyManager(keys []string, rotationStrategy string, healthCheckInterval t
 			AllowedModels: []string{}, // 空数组表示允许所有模型
 		}
 		km.keyStatuses[key] = &KeyStatus{
-			Key:           key,
-			Name:          km.keyInfos[key].Name,
-			Description:   km.keyInfos[key].Description,
-			IsActive:      true,
-			LastUsed:      time.Time{},
-			UsageCount:    0,
-			ErrorCount:    0,
-			AllowedModels: km.keyInfos[key].AllowedModels,
+			Key:             key,
+			Name:            km.keyInfos[key].Name,
+			Description:     km.keyInfos[key].Description,
+			IsActive:        true,
+			IsValid:         nil, // 初始状态未验证
+			LastUsed:        time.Time{},
+			LastValidated:   nil,
+			UsageCount:      0,
+			ErrorCount:      0,
+			ValidationError: "",
+			UpdatedAt:       time.Now(),
+			AllowedModels:   km.keyInfos[key].AllowedModels,
 		}
 	}
 
@@ -198,20 +223,43 @@ func (km *KeyManager) leastUsedSelection(activeKeys []string) string {
 	return leastUsedKey
 }
 
-// ReportError 报告密钥错误
-func (km *KeyManager) ReportError(key string, errorMsg string) {
+// ReportError 报告密钥使用错误
+func (km *KeyManager) ReportError(apiKey string, errorMsg string) {
 	km.mutex.Lock()
 	defer km.mutex.Unlock()
 
-	if status, exists := km.keyStatuses[key]; exists {
+	if status, exists := km.keyStatuses[apiKey]; exists {
+		now := time.Now()
 		status.ErrorCount++
 		status.LastError = errorMsg
-		status.LastErrorTime = time.Now()
+		status.LastErrorTime = now
+		status.LastValidated = &now
+		status.UpdatedAt = now
+		status.UsageCount++
 
-		// 如果错误次数过多，暂时禁用该密钥
-		if status.ErrorCount >= 5 {
+		// 根据错误类型判断密钥有效性
+		isKeyInvalid := km.isKeyInvalidError(errorMsg)
+		if isKeyInvalid {
+			isValid := false
+			status.IsValid = &isValid
+			status.ValidationError = errorMsg
 			status.IsActive = false
-			log.Printf("API key disabled due to too many errors: %s", km.maskKey(key))
+			log.Printf("API key %s marked as invalid: %s", km.maskKey(apiKey), errorMsg)
+		} else {
+			log.Printf("API key %s temporary error: %s (error count: %d)", km.maskKey(apiKey), errorMsg, status.ErrorCount)
+		}
+
+		// 如果错误次数过多，暂时禁用密钥
+		if status.ErrorCount >= 5 && !isKeyInvalid {
+			status.IsActive = false
+			log.Printf("API key %s disabled due to too many errors", km.maskKey(apiKey))
+		}
+
+		// 实时更新数据库状态
+		if km.database != nil {
+			if err := km.database.UpdateAPIKeyValidation("default", apiKey, !isKeyInvalid, errorMsg); err != nil {
+				log.Printf("Failed to update API key validation in database: %v", err)
+			}
 		}
 	}
 }
@@ -222,12 +270,34 @@ func (km *KeyManager) ReportSuccess(key string) {
 	defer km.mutex.Unlock()
 
 	if status, exists := km.keyStatuses[key]; exists {
+		now := time.Now()
+
 		// 成功使用后，如果密钥被禁用，可以重新启用
 		if !status.IsActive && status.ErrorCount > 0 {
 			status.IsActive = true
 			status.ErrorCount = 0
 			status.LastError = ""
 			log.Printf("API key re-enabled after successful use: %s", km.maskKey(key))
+		}
+
+		// 更新状态字段
+		status.LastUsed = now
+		status.UsageCount++
+		status.UpdatedAt = now
+
+		// 标记为有效
+		isValid := true
+		status.IsValid = &isValid
+		status.ValidationError = ""
+		status.LastValidated = &now
+
+		// 实时更新数据库状态
+		if km.database != nil {
+			go func() {
+				if err := km.database.UpdateAPIKeyValidation("default", key, true, ""); err != nil {
+					log.Printf("Failed to update API key validation in database: %v", err)
+				}
+			}()
 		}
 	}
 }
@@ -581,10 +651,60 @@ func (km *KeyManager) GetAllAllowedModels() []string {
 	return models
 }
 
+// isKeyInvalidError 判断错误是否表示密钥无效
+func (km *KeyManager) isKeyInvalidError(errorMsg string) bool {
+	invalidErrorPatterns := []string{
+		"401", "unauthorized", "invalid api key", "invalid_api_key",
+		"authentication failed", "api key not found", "forbidden",
+		"account deactivated", "insufficient credits", "quota exceeded permanently",
+	}
+
+	errorLower := strings.ToLower(errorMsg)
+	for _, pattern := range invalidErrorPatterns {
+		if strings.Contains(errorLower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetKeyValidationStats 获取密钥验证统计
+func (km *KeyManager) GetKeyValidationStats() map[string]interface{} {
+	km.mutex.RLock()
+	defer km.mutex.RUnlock()
+
+	stats := map[string]interface{}{
+		"total_keys":    len(km.keys),
+		"active_keys":   0,
+		"valid_keys":    0,
+		"invalid_keys":  0,
+		"untested_keys": 0,
+	}
+
+	for _, status := range km.keyStatuses {
+		if status.IsActive {
+			stats["active_keys"] = stats["active_keys"].(int) + 1
+		}
+
+		if status.IsValid == nil {
+			stats["untested_keys"] = stats["untested_keys"].(int) + 1
+		} else if *status.IsValid {
+			stats["valid_keys"] = stats["valid_keys"].(int) + 1
+		} else {
+			stats["invalid_keys"] = stats["invalid_keys"].(int) + 1
+		}
+	}
+
+	return stats
+}
+
 // Close 关闭密钥管理器
 func (km *KeyManager) Close() {
 	if km.cancel != nil {
 		km.cancel()
+	}
+	if km.database != nil {
+		km.database.Close()
 	}
 }
 

@@ -74,6 +74,7 @@ func (d *Database) initTables() error {
 		allowed_groups TEXT, -- JSON数组，存储允许访问的分组ID
 		group_selection_config TEXT, -- JSON对象，存储分组选择配置
 		is_active BOOLEAN NOT NULL DEFAULT 1,
+		usage_count INTEGER NOT NULL DEFAULT 0, -- 使用次数
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		last_used_at DATETIME
@@ -104,7 +105,7 @@ func (d *Database) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_proxy_keys_name ON proxy_keys(name);
 	CREATE INDEX IF NOT EXISTS idx_proxy_keys_key ON proxy_keys(key);
 	CREATE INDEX IF NOT EXISTS idx_proxy_keys_is_active ON proxy_keys(is_active);
-	
+
 	CREATE INDEX IF NOT EXISTS idx_request_logs_proxy_key_id ON request_logs(proxy_key_id);
 	CREATE INDEX IF NOT EXISTS idx_request_logs_proxy_key_name ON request_logs(proxy_key_name);
 	CREATE INDEX IF NOT EXISTS idx_request_logs_provider_group ON request_logs(provider_group);
@@ -123,7 +124,51 @@ func (d *Database) initTables() error {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	// 迁移proxy_keys表
+	if err := d.migrateProxyKeysTable(); err != nil {
+		return fmt.Errorf("failed to migrate proxy_keys table: %w", err)
+	}
+
 	log.Println("Database tables initialized successfully")
+	return nil
+}
+
+// migrateProxyKeysTable 迁移proxy_keys表，添加usage_count字段
+func (d *Database) migrateProxyKeysTable() error {
+	// 检查usage_count字段是否存在
+	checkSQL := `PRAGMA table_info(proxy_keys)`
+	rows, err := d.db.Query(checkSQL)
+	if err != nil {
+		return fmt.Errorf("failed to check table info: %w", err)
+	}
+	defer rows.Close()
+
+	hasUsageCount := false
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, dfltValue, pk interface{}
+
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &dfltValue, &pk); err != nil {
+			continue
+		}
+
+		if name == "usage_count" {
+			hasUsageCount = true
+			break
+		}
+	}
+
+	// 如果没有usage_count字段，则添加
+	if !hasUsageCount {
+		alterSQL := `ALTER TABLE proxy_keys ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0`
+		_, err := d.db.Exec(alterSQL)
+		if err != nil {
+			return fmt.Errorf("failed to add usage_count column: %w", err)
+		}
+		log.Println("Added usage_count column to proxy_keys table")
+	}
+
 	return nil
 }
 
@@ -486,7 +531,7 @@ func (d *Database) GetRequestLogDetail(id int64) (*RequestLog, error) {
 // GetProxyKeyStats 获取代理密钥统计
 func (d *Database) GetProxyKeyStats() ([]*ProxyKeyStats, error) {
 	query := `
-	SELECT 
+	SELECT
 		proxy_key_name,
 		proxy_key_id,
 		COUNT(*) as total_requests,
@@ -494,7 +539,7 @@ func (d *Database) GetProxyKeyStats() ([]*ProxyKeyStats, error) {
 		SUM(CASE WHEN status_code != 200 THEN 1 ELSE 0 END) as error_requests,
 		SUM(tokens_used) as total_tokens,
 		AVG(duration) as avg_duration
-	FROM request_logs 
+	FROM request_logs
 	GROUP BY proxy_key_name, proxy_key_id
 	ORDER BY total_requests DESC
 	`
@@ -623,12 +668,12 @@ func (d *Database) InsertProxyKey(key *ProxyKey) error {
 	}
 
 	query := `
-	INSERT INTO proxy_keys (id, name, description, key, allowed_groups, group_selection_config, is_active, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO proxy_keys (id, name, description, key, allowed_groups, group_selection_config, is_active, usage_count, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := d.db.Exec(query,
-		key.ID, key.Name, key.Description, key.Key, allowedGroupsJSON, key.GroupSelectionConfig, key.IsActive,
+		key.ID, key.Name, key.Description, key.Key, allowedGroupsJSON, key.GroupSelectionConfig, key.IsActive, key.UsageCount,
 		key.CreatedAt, key.UpdatedAt,
 	)
 	if err != nil {
@@ -641,7 +686,7 @@ func (d *Database) InsertProxyKey(key *ProxyKey) error {
 // GetProxyKey 根据密钥获取代理密钥信息
 func (d *Database) GetProxyKey(keyValue string) (*ProxyKey, error) {
 	query := `
-	SELECT id, name, description, key, allowed_groups, group_selection_config, is_active, created_at, updated_at, last_used_at
+	SELECT id, name, description, key, allowed_groups, group_selection_config, is_active, usage_count, created_at, updated_at, last_used_at
 	FROM proxy_keys
 	WHERE key = ? AND is_active = 1
 	`
@@ -651,7 +696,7 @@ func (d *Database) GetProxyKey(keyValue string) (*ProxyKey, error) {
 	var groupSelectionConfigJSON sql.NullString
 	err := d.db.QueryRow(query, keyValue).Scan(
 		&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &groupSelectionConfigJSON, &key.IsActive,
-		&key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
+		&key.UsageCount, &key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -682,7 +727,7 @@ func (d *Database) GetProxyKey(keyValue string) (*ProxyKey, error) {
 // GetAllProxyKeys 获取所有代理密钥
 func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 	query := `
-	SELECT id, name, description, key, allowed_groups, group_selection_config, is_active, created_at, updated_at, last_used_at
+	SELECT id, name, description, key, allowed_groups, group_selection_config, is_active, usage_count, created_at, updated_at, last_used_at
 	FROM proxy_keys
 	ORDER BY created_at DESC
 	`
@@ -698,11 +743,10 @@ func (d *Database) GetAllProxyKeys() ([]*ProxyKey, error) {
 		key := &ProxyKey{}
 		var allowedGroupsJSON string
 		var groupSelectionConfigJSON sql.NullString
-		err := rows.Scan(
+		if err := rows.Scan(
 			&key.ID, &key.Name, &key.Description, &key.Key, &allowedGroupsJSON, &groupSelectionConfigJSON, &key.IsActive,
-			&key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
-		)
-		if err != nil {
+			&key.UsageCount, &key.CreatedAt, &key.UpdatedAt, &key.LastUsedAt,
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan proxy key: %w", err)
 		}
 
@@ -742,13 +786,13 @@ func (d *Database) UpdateProxyKey(key *ProxyKey) error {
 
 	query := `
 	UPDATE proxy_keys
-	SET name = ?, description = ?, allowed_groups = ?, group_selection_config = ?, is_active = ?, updated_at = ?
+	SET name = ?, description = ?, allowed_groups = ?, group_selection_config = ?, is_active = ?, usage_count = ?, updated_at = ?
 	WHERE id = ?
 	`
 
 	now := time.Now()
 	_, err := d.db.Exec(query,
-		key.Name, key.Description, allowedGroupsJSON, key.GroupSelectionConfig, key.IsActive, now, key.ID,
+		key.Name, key.Description, allowedGroupsJSON, key.GroupSelectionConfig, key.IsActive, key.UsageCount, now, key.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update proxy key: %w", err)
@@ -765,6 +809,19 @@ func (d *Database) UpdateProxyKeyLastUsed(keyID string) error {
 	_, err := d.db.Exec(query, now, now, keyID)
 	if err != nil {
 		return fmt.Errorf("failed to update proxy key last used: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateProxyKeyUsage 更新代理密钥使用次数
+func (d *Database) UpdateProxyKeyUsage(keyID string) error {
+	query := `UPDATE proxy_keys SET usage_count = usage_count + 1, last_used_at = ?, updated_at = ? WHERE id = ?`
+
+	now := time.Now()
+	_, err := d.db.Exec(query, now, now, keyID)
+	if err != nil {
+		return fmt.Errorf("failed to update proxy key usage: %w", err)
 	}
 
 	return nil
