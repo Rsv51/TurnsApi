@@ -4,11 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
 	"turnsapi/internal"
 )
+
+// DuplicateKeyInfo 重复密钥信息
+type DuplicateKeyInfo struct {
+	Key            string `json:"key"`             // 重复的密钥
+	KeySuffix      string `json:"key_suffix"`      // 密钥后缀（用于显示）
+	ConflictGroup  string `json:"conflict_group"`  // 冲突的分组ID
+	OriginalIndex  int    `json:"original_index"`  // 原始索引位置
+	DuplicateIndex int    `json:"duplicate_index"` // 重复索引位置（用于内部重复）
+}
 
 // GroupKeyManager 分组密钥管理器
 type GroupKeyManager struct {
@@ -38,7 +48,7 @@ func NewGroupKeyManager(groupID, groupName string, keys []string, rotationStrate
 	for _, key := range keys {
 		gkm.keyInfos[key] = &KeyInfo{
 			Key:           key,
-			Name:          fmt.Sprintf("%s-Key-%s", groupName, key[len(key)-8:]),
+			Name:          fmt.Sprintf("%s-Key-%s", groupName, getSafeKeySuffix(key)),
 			Description:   fmt.Sprintf("密钥来自分组: %s", groupName),
 			IsActive:      true,
 			AllowedModels: []string{},
@@ -246,6 +256,14 @@ func (gkm *GroupKeyManager) maskKey(key string) string {
 	return key[:4] + "****" + key[len(key)-4:]
 }
 
+// getSafeKeySuffix 安全地获取密钥后缀，避免数组越界
+func getSafeKeySuffix(key string) string {
+	if len(key) <= 8 {
+		return key
+	}
+	return key[len(key)-8:]
+}
+
 // randomInt 生成随机整数
 func randomInt(max int) int {
 	return int(time.Now().UnixNano()) % max
@@ -434,6 +452,130 @@ func (mgkm *MultiGroupKeyManager) GetKeyHealthStatus() map[string]interface{} {
 	}
 
 	return stats
+}
+
+// CheckKeyDuplication 检查密钥是否在所有分组中重复
+func (mgkm *MultiGroupKeyManager) CheckKeyDuplication(newKeys []string) map[string][]string {
+	mgkm.mutex.RLock()
+	defer mgkm.mutex.RUnlock()
+
+	duplicates := make(map[string][]string)
+
+	for _, newKey := range newKeys {
+		if strings.TrimSpace(newKey) == "" {
+			continue
+		}
+
+		var foundInGroups []string
+		
+		// 检查所有分组中的密钥
+		for groupID, groupManager := range mgkm.groupManagers {
+			for _, existingKey := range groupManager.keys {
+				if existingKey == newKey {
+					foundInGroups = append(foundInGroups, groupID)
+					break
+				}
+			}
+		}
+
+		if len(foundInGroups) > 0 {
+			duplicates[newKey] = foundInGroups
+		}
+	}
+
+	return duplicates
+}
+
+// CheckSingleKeyDuplication 检查单个密钥是否重复
+func (mgkm *MultiGroupKeyManager) CheckSingleKeyDuplication(newKey string) []string {
+	if strings.TrimSpace(newKey) == "" {
+		return nil
+	}
+
+	duplicates := mgkm.CheckKeyDuplication([]string{newKey})
+	if foundInGroups, exists := duplicates[newKey]; exists {
+		return foundInGroups
+	}
+	return nil
+}
+
+// GetAllKeysAcrossGroups 获取所有分组中的密钥列表（用于去重检查）
+func (mgkm *MultiGroupKeyManager) GetAllKeysAcrossGroups() map[string][]string {
+	mgkm.mutex.RLock()
+	defer mgkm.mutex.RUnlock()
+
+	allKeys := make(map[string][]string)
+
+	for groupID, groupManager := range mgkm.groupManagers {
+		for _, key := range groupManager.keys {
+			if existingGroups, exists := allKeys[key]; exists {
+				allKeys[key] = append(existingGroups, groupID)
+			} else {
+				allKeys[key] = []string{groupID}
+			}
+		}
+	}
+
+	return allKeys
+}
+
+// ValidateKeysForGroup 验证要添加到分组的密钥，只检查分组内重复
+func (mgkm *MultiGroupKeyManager) ValidateKeysForGroup(groupID string, newKeys []string) (validKeys []string, groupDuplicates []DuplicateKeyInfo, internalDuplicates []DuplicateKeyInfo) {
+	mgkm.mutex.RLock()
+	defer mgkm.mutex.RUnlock()
+	
+	validKeys = make([]string, 0)
+	groupDuplicates = make([]DuplicateKeyInfo, 0)
+	internalDuplicates = make([]DuplicateKeyInfo, 0)
+	
+	// 获取目标分组现有密钥
+	var existingKeys map[string]bool
+	if groupManager, exists := mgkm.groupManagers[groupID]; exists {
+		existingKeys = make(map[string]bool)
+		for _, key := range groupManager.keys {
+			existingKeys[key] = true
+		}
+	} else {
+		existingKeys = make(map[string]bool)
+	}
+	
+	// 用于跟踪输入列表中的重复
+	seenInInput := make(map[string]int) // key -> first occurrence index
+	
+	for i, key := range newKeys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		
+		// 检查输入列表内部重复
+		if firstIndex, exists := seenInInput[key]; exists {
+			internalDuplicates = append(internalDuplicates, DuplicateKeyInfo{
+				Key:            key,
+				KeySuffix:      getSafeKeySuffix(key),
+				OriginalIndex:  firstIndex,
+				DuplicateIndex: i,
+			})
+			continue
+		}
+		seenInInput[key] = i
+		
+		// 检查与分组内现有密钥的重复
+		if existingKeys[key] {
+			groupDuplicates = append(groupDuplicates, DuplicateKeyInfo{
+				Key:           key,
+				KeySuffix:     getSafeKeySuffix(key),
+				ConflictGroup: groupID,
+				OriginalIndex: i,
+			})
+			continue
+		}
+		
+		// 密钥有效，添加到结果中
+		validKeys = append(validKeys, key)
+	}
+	
+	return validKeys, groupDuplicates, internalDuplicates
 }
 
 // Close 关闭管理器

@@ -89,7 +89,7 @@ func NewKeyManager(keys []string, rotationStrategy string, healthCheckInterval t
 	for _, key := range keys {
 		km.keyInfos[key] = &KeyInfo{
 			Key:           key,
-			Name:          fmt.Sprintf("Key-%s", key[len(key)-8:]), // 使用密钥后8位作为默认名称
+			Name:          fmt.Sprintf("Key-%s", getSafeKeySuffix(key)), // 使用密钥后8位作为默认名称
 			Description:   "",
 			IsActive:      true,
 			AllowedModels: []string{}, // 空数组表示允许所有模型
@@ -335,10 +335,8 @@ func (km *KeyManager) AddKey(key, name, description string, allowedModels []stri
 	defer km.mutex.Unlock()
 
 	// 检查密钥是否已存在
-	for _, existingKey := range km.keys {
-		if existingKey == key {
-			return fmt.Errorf("API密钥已存在")
-		}
+	if duplicates := km.checkKeyDuplication([]string{key}); len(duplicates) > 0 {
+		return fmt.Errorf("API密钥已存在")
 	}
 
 	// 添加密钥到列表
@@ -346,7 +344,7 @@ func (km *KeyManager) AddKey(key, name, description string, allowedModels []stri
 
 	// 如果没有提供名称，使用默认名称
 	if name == "" {
-		name = fmt.Sprintf("Key-%s", key[len(key)-8:])
+		name = fmt.Sprintf("Key-%s", getSafeKeySuffix(key))
 	}
 
 	// 初始化密钥信息
@@ -389,31 +387,62 @@ func (km *KeyManager) AddKeysInBatch(keys []string) (int, []string, error) {
 	var errors []string
 	addedCount := 0
 
+	// 首先检查所有密钥的重复情况
+	duplicates := km.checkKeyDuplication(keys)
+	duplicateSet := make(map[string]bool)
+	for _, dup := range duplicates {
+		duplicateSet[dup] = true
+	}
+
+	// 检查输入列表内部的重复
+	keySet := make(map[string]int) // 记录每个密钥第一次出现的位置
+	internalDuplicates := make(map[string][]int) // 记录内部重复的位置
+
 	for i, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+
+		if firstIndex, exists := keySet[key]; exists {
+			// 内部重复
+			if _, dupExists := internalDuplicates[key]; !dupExists {
+				internalDuplicates[key] = []int{firstIndex + 1} // 转换为1基索引
+			}
+			internalDuplicates[key] = append(internalDuplicates[key], i+1)
+		} else {
+			keySet[key] = i
+		}
+	}
+
+	for i, key := range keys {
+		key = strings.TrimSpace(key)
 		// 跳过空密钥
 		if key == "" {
 			continue
 		}
 
-		// 检查密钥是否已存在
-		exists := false
-		for _, existingKey := range km.keys {
-			if existingKey == key {
-				errors = append(errors, fmt.Sprintf("密钥 %d: 已存在", i+1))
-				exists = true
-				break
-			}
+		// 检查是否与现有密钥重复
+		if duplicateSet[key] {
+			errors = append(errors, fmt.Sprintf("密钥 %d: 与现有密钥重复", i+1))
+			continue
 		}
 
-		if exists {
-			continue
+		// 检查是否为内部重复（跳过非首次出现的）
+		if positions, exists := internalDuplicates[key]; exists {
+			if positions[0] != i+1 { // 不是第一次出现
+				errors = append(errors, fmt.Sprintf("密钥 %d: 与输入列表中的密钥 %d 重复", i+1, positions[0]))
+				continue
+			}
+			// 如果是第一次出现，记录重复信息但继续处理
+			errors = append(errors, fmt.Sprintf("密钥 %d: 在输入列表中重复出现于位置 %v", i+1, positions[1:]))
 		}
 
 		// 添加密钥到列表
 		km.keys = append(km.keys, key)
 
 		// 生成默认名称
-		name := fmt.Sprintf("Key-%s", key[len(key)-8:])
+		name := fmt.Sprintf("Key-%s", getSafeKeySuffix(key))
 
 		// 初始化密钥信息
 		km.keyInfos[key] = &KeyInfo{
@@ -777,3 +806,32 @@ func (km *KeyManager) updateConfigFile() error {
 	log.Printf("配置文件已更新: %s，当前密钥数量: %d", km.configPath, len(km.keys))
 	return nil
 }
+
+// checkKeyDuplication 检查密钥是否重复（内部方法，调用时需要已获得锁）
+func (km *KeyManager) checkKeyDuplication(newKeys []string) []string {
+	var duplicates []string
+	
+	for _, newKey := range newKeys {
+		if strings.TrimSpace(newKey) == "" {
+			continue
+		}
+		
+		for _, existingKey := range km.keys {
+			if existingKey == newKey {
+				duplicates = append(duplicates, newKey)
+				break
+			}
+		}
+	}
+	
+	return duplicates
+}
+
+// CheckKeyDuplication 公开的密钥重复检查方法
+func (km *KeyManager) CheckKeyDuplication(newKeys []string) []string {
+	km.mutex.RLock()
+	defer km.mutex.RUnlock()
+	
+	return km.checkKeyDuplication(newKeys)
+}
+

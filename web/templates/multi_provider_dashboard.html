@@ -736,17 +736,6 @@
                                             class="flex items-center space-x-1"
                                         >
                                             <span class="text-gray-600"
-                                                >健康:</span
-                                            >
-                                            <span
-                                                :class="provider.healthy ? 'text-green-600' : 'text-red-600'"
-                                                x-text="provider.healthy ? '健康' : '异常'"
-                                            ></span>
-                                        </div>
-                                        <div
-                                            class="flex items-center space-x-1"
-                                        >
-                                            <span class="text-gray-600"
                                                 >状态:</span
                                             >
                                             <span
@@ -810,17 +799,6 @@
                                                     ></span>
                                                 </div>
                                             </div>
-                                        </div>
-                                        <div
-                                            class="flex items-center space-x-1"
-                                        >
-                                            <span class="text-gray-600"
-                                                >响应:</span
-                                            >
-                                            <span
-                                                class="text-gray-900"
-                                                x-text="formatResponseTime(provider.response_time)"
-                                            ></span>
                                         </div>
                                     </div>
                                 </div>
@@ -1700,9 +1678,9 @@
                                         </button>
                                         <button
                                             type="button"
-                                            @click="validateKeys()"
-                                            :disabled="validatingKeys || groupFormData.api_keys.filter(k => k.trim()).length === 0"
-                                            class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                            @click="clearAllKeys()"
+                                            :disabled="groupFormData.api_keys.filter(k => k.trim()).length === 0"
+                                            class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                         >
                                             <svg
                                                 class="w-4 h-4 mr-1"
@@ -1714,15 +1692,31 @@
                                                     stroke-linecap="round"
                                                     stroke-linejoin="round"
                                                     stroke-width="2"
-                                                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                                                 ></path>
                                             </svg>
-                                            <span x-show="!validatingKeys"
-                                                >验证密钥</span
+                                            清空密钥
+                                        </button>
+                                        <button
+                                            type="button"
+                                            @click="exportKeys()"
+                                            :disabled="groupFormData.api_keys.filter(k => k.trim()).length === 0"
+                                            class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                        >
+                                            <svg
+                                                class="w-4 h-4 mr-1"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                viewBox="0 0 24 24"
                                             >
-                                            <span x-show="validatingKeys"
-                                                >验证中...</span
-                                            >
+                                                <path
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    stroke-width="2"
+                                                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                                                ></path>
+                                            </svg>
+                                            导出密钥
                                         </button>
                                         <button
                                             type="button"
@@ -1772,6 +1766,27 @@
                                             ></span
                                             >)
                                         </button>
+                                        <button
+                                            type="button"
+                                            @click="removeDuplicateKeys()"
+                                            x-show="checkCurrentKeyDuplicates().size > 0"
+                                            class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-colors"
+                                        >
+                                            <svg
+                                                class="w-4 h-4 mr-1"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                viewBox="0 0 24 24"
+                                            >
+                                                <path
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    stroke-width="2"
+                                                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                                ></path>
+                                            </svg>
+                                            去除重复
+                                        </button>
                                     </div>
                                 </div>
 
@@ -1786,7 +1801,7 @@
                                         >
                                             <div
                                                 class="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded"
-                                                :class="getKeyValidationClass(index + keyPageOffset)"
+                                                :class="getKeyValidationClass(index + keyPageOffset) + (checkCurrentKeyDuplicates().has(index + keyPageOffset) ? ' border-l-4 border-orange-400 bg-orange-50' : '')"
                                             >
                                                 <input
                                                     type="checkbox"
@@ -4559,11 +4574,23 @@
                             ];
                             this.groupFormData.models = allModels;
 
-                            // 过滤空的API密钥
-                            this.groupFormData.api_keys =
-                                this.groupFormData.api_keys.filter(
-                                    (key) => key.trim().length > 0,
+                            // 过滤空的API密钥并去重
+                            const validKeys = this.groupFormData.api_keys
+                                .map(key => key.trim())
+                                .filter(key => key.length > 0);
+                            
+                            // 去重处理
+                            const uniqueKeys = [...new Set(validKeys)];
+                            this.groupFormData.api_keys = uniqueKeys;
+                            
+                            // 如果发现重复密钥，显示提示
+                            if (validKeys.length !== uniqueKeys.length) {
+                                const duplicateCount = validKeys.length - uniqueKeys.length;
+                                this.showMessage(
+                                    `检测到 ${duplicateCount} 个重复密钥已自动去除`,
+                                    "success"
                                 );
+                            }
 
                             // 处理JSON请求参数
                             if (this.requestParamsText.trim()) {
@@ -4804,6 +4831,90 @@
                         this.groupFormData.api_keys.push("");
                     },
 
+                    // 检查密钥是否重复的辅助函数
+                    checkDuplicateKeys(keys) {
+                        const keyMap = new Map();
+                        const duplicates = [];
+                        const unique = [];
+                        
+                        keys.forEach((key, index) => {
+                            const trimmedKey = key.trim();
+                            if (trimmedKey.length === 0) return;
+                            
+                            if (keyMap.has(trimmedKey)) {
+                                duplicates.push({
+                                    key: trimmedKey,
+                                    indexes: [keyMap.get(trimmedKey), index]
+                                });
+                            } else {
+                                keyMap.set(trimmedKey, index);
+                                unique.push(trimmedKey);
+                            }
+                        });
+                        
+                        return {
+                            duplicates,
+                            unique,
+                            hasDuplicates: duplicates.length > 0
+                        };
+                    },
+
+                    // 去重密钥数组
+                    deduplicateKeys(keys) {
+                        const seen = new Set();
+                        return keys.filter(key => {
+                            const trimmedKey = key.trim();
+                            if (trimmedKey.length === 0) return false;
+                            if (seen.has(trimmedKey)) return false;
+                            seen.add(trimmedKey);
+                            return true;
+                        });
+                    },
+
+                    // 检查当前密钥列表中的重复项
+                    checkCurrentKeyDuplicates() {
+                        const duplicateIndexes = new Set();
+                        const seen = new Map();
+                        
+                        this.groupFormData.api_keys.forEach((key, index) => {
+                            const trimmedKey = key.trim();
+                            if (trimmedKey.length === 0) return;
+                            
+                            if (seen.has(trimmedKey)) {
+                                // 标记当前索引和之前的索引为重复
+                                duplicateIndexes.add(index);
+                                duplicateIndexes.add(seen.get(trimmedKey));
+                            } else {
+                                seen.set(trimmedKey, index);
+                            }
+                        });
+                        
+                        return duplicateIndexes;
+                    },
+
+                    // 移除所有重复的密钥，只保留第一个
+                    removeDuplicateKeys() {
+                        const originalLength = this.groupFormData.api_keys.length;
+                        const validKeys = this.groupFormData.api_keys.filter(key => key.trim().length > 0);
+                        const uniqueKeys = this.deduplicateKeys(validKeys);
+                        
+                        // 如果所有密钥都被去重了，至少保留一个空项
+                        if (uniqueKeys.length === 0) {
+                            this.groupFormData.api_keys = [""];
+                        } else {
+                            this.groupFormData.api_keys = uniqueKeys;
+                        }
+                        
+                        const removedCount = originalLength - this.groupFormData.api_keys.length;
+                        if (removedCount > 0) {
+                            this.showMessage(`已移除 ${removedCount} 个重复密钥`, "success");
+                        }
+                        
+                        // 重置页码和选中状态
+                        this.selectedKeys = [];
+                        this.keyPage = 1;
+                    },
+
                     removeGroupApiKey(index) {
                         if (this.groupFormData.api_keys.length > 1) {
                             this.groupFormData.api_keys.splice(index, 1);
@@ -4830,23 +4941,37 @@
                             .filter((line) => line.length > 0);
 
                         if (keys.length > 0) {
-                            // 移除空的密钥项
-                            this.groupFormData.api_keys =
-                                this.groupFormData.api_keys.filter(
-                                    (key) => key.trim().length > 0,
-                                );
-                            // 添加新密钥
-                            this.groupFormData.api_keys.push(...keys);
-                            // 如果原来没有密钥，确保至少有一个空项
-                            if (this.groupFormData.api_keys.length === 0) {
-                                this.groupFormData.api_keys.push("");
+                            // 获取现有的非空密钥
+                            const existingKeys = this.groupFormData.api_keys
+                                .map(key => key.trim())
+                                .filter(key => key.length > 0);
+                            
+                            // 检查重复密钥
+                            const duplicateKeys = [];
+                            const newUniqueKeys = [];
+                            
+                            keys.forEach(key => {
+                                if (existingKeys.includes(key)) {
+                                    duplicateKeys.push(key);
+                                } else if (!newUniqueKeys.includes(key)) {
+                                    newUniqueKeys.push(key);
+                                }
+                            });
+                            
+                            // 添加新的唯一密钥
+                            if (newUniqueKeys.length > 0) {
+                                this.groupFormData.api_keys.push(...newUniqueKeys);
                             }
+                            
                             this.batchKeysText = "";
                             this.showBatchAddModal = false;
-                            this.showMessage(
-                                `成功添加 ${keys.length} 个密钥`,
-                                "success",
-                            );
+                            
+                            // 显示结果消息
+                            let message = `成功添加 ${newUniqueKeys.length} 个密钥`;
+                            if (duplicateKeys.length > 0) {
+                                message += `，跳过 ${duplicateKeys.length} 个重复密钥`;
+                            }
+                            this.showMessage(message, "success");
                         }
                     },
 
@@ -5130,6 +5255,67 @@
                             );
                         } finally {
                             this.validatingKeys = false;
+                        }
+                    },
+
+                    // 清空所有密钥
+                    clearAllKeys() {
+                        if (this.groupFormData.api_keys.filter(k => k.trim()).length === 0) {
+                            this.showMessage("没有密钥需要清空", "info");
+                            return;
+                        }
+
+                        if (!confirm("确定要清空所有密钥吗？此操作不可恢复。")) {
+                            return;
+                        }
+
+                        // 清空所有密钥，只保留一个空项
+                        this.groupFormData.api_keys = [""];
+                        
+                        // 清除选中状态和验证状态
+                        this.selectedKeys = [];
+                        this.keyValidationStatus = {};
+                        this.invalidKeyIndexes = [];
+                        
+                        // 重置页码
+                        this.keyPage = 1;
+                        
+                        this.showMessage("已清空所有密钥", "success");
+                    },
+
+                    // 导出密钥
+                    exportKeys() {
+                        const validKeys = this.groupFormData.api_keys.filter(k => k.trim());
+                        
+                        if (validKeys.length === 0) {
+                            this.showMessage("没有密钥可以导出", "info");
+                            return;
+                        }
+
+                        try {
+                            // 创建文件内容，每行一个密钥
+                            const content = validKeys.join('\n');
+                            
+                            // 生成文件名
+                            const groupName = this.groupFormData.name || this.groupFormData.group_id || 'group';
+                            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+                            const filename = `${groupName}_api_keys_${timestamp}.txt`;
+                            
+                            // 创建并下载文件
+                            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = filename;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                            
+                            this.showMessage(`已导出 ${validKeys.length} 个密钥到文件 ${filename}`, "success");
+                        } catch (error) {
+                            console.error('导出密钥失败:', error);
+                            this.showMessage("导出密钥失败: " + error.message, "error");
                         }
                     },
 

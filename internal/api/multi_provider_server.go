@@ -2422,7 +2422,7 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 		req.ModelMappings = make(map[string]string)
 	}
 
-	// 创建新的用户分组
+	// 创建新的用户分组，直接使用提供的密钥（前端已去重）
 	newGroup := &internal.UserGroup{
 		Name:              req.Name,
 		ProviderType:      req.ProviderType,
@@ -2431,7 +2431,7 @@ func (s *MultiProviderServer) handleCreateGroup(c *gin.Context) {
 		Timeout:           time.Duration(req.Timeout) * time.Second,
 		MaxRetries:        req.MaxRetries,
 		RotationStrategy:  req.RotationStrategy,
-		APIKeys:           req.APIKeys,
+		APIKeys:           req.APIKeys, // 直接使用前端提供的密钥
 		Models:            req.Models,
 		Headers:           req.Headers,
 		RequestParams:     req.RequestParams,
@@ -2547,7 +2547,7 @@ func (s *MultiProviderServer) handleUpdateGroup(c *gin.Context) {
 		existingGroup.RotationStrategy = req.RotationStrategy
 	}
 	if req.APIKeys != nil {
-		existingGroup.APIKeys = req.APIKeys
+		existingGroup.APIKeys = req.APIKeys // 直接使用前端提供的密钥（前端已去重）
 	}
 	if req.Models != nil {
 		existingGroup.Models = req.Models
