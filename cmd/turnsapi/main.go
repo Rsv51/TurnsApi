@@ -12,6 +12,7 @@ import (
 
 	"turnsapi/internal"
 	"turnsapi/internal/api"
+	"turnsapi/internal/database"
 	"turnsapi/internal/keymanager"
 	"turnsapi/internal/logger"
 )
@@ -59,7 +60,16 @@ func main() {
 	}()
 
 	// 创建多分组密钥管理器（快速初始化，无网络检查）
-	keyManager := keymanager.NewMultiGroupKeyManager(config)
+	// 初始化数据库连接用于密钥管理器
+	groupsDB, err := database.NewGroupsDB(config.Database.Path)
+	var keyManager *keymanager.MultiGroupKeyManager
+	if err != nil {
+		log.Printf("警告: 无法初始化数据库连接用于密钥管理器: %v", err)
+		keyManager = keymanager.NewMultiGroupKeyManager(config)
+	} else {
+		keyManager = keymanager.NewMultiGroupKeyManagerWithDB(config, groupsDB)
+		defer groupsDB.Close()
+	}
 	defer keyManager.Close()
 
 	log.Printf("密钥管理器快速初始化完成")

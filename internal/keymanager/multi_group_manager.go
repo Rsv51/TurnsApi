@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"turnsapi/internal"
+	"turnsapi/internal/database"
 )
 
 // DuplicateKeyInfo 重复密钥信息
@@ -273,6 +274,7 @@ func randomInt(max int) int {
 type MultiGroupKeyManager struct {
 	config        *internal.Config
 	groupManagers map[string]*GroupKeyManager
+	database      *database.GroupsDB // 添加数据库连接
 	mutex         sync.RWMutex
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -280,11 +282,17 @@ type MultiGroupKeyManager struct {
 
 // NewMultiGroupKeyManager 创建多分组密钥管理器
 func NewMultiGroupKeyManager(config *internal.Config) *MultiGroupKeyManager {
+	return NewMultiGroupKeyManagerWithDB(config, nil)
+}
+
+// NewMultiGroupKeyManagerWithDB 创建带数据库连接的多分组密钥管理器
+func NewMultiGroupKeyManagerWithDB(config *internal.Config, db *database.GroupsDB) *MultiGroupKeyManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mgkm := &MultiGroupKeyManager{
 		config:        config,
 		groupManagers: make(map[string]*GroupKeyManager),
+		database:      db,
 		ctx:           ctx,
 		cancel:        cancel,
 	}
@@ -293,6 +301,12 @@ func NewMultiGroupKeyManager(config *internal.Config) *MultiGroupKeyManager {
 	for groupID, group := range config.UserGroups {
 		if group.Enabled && len(group.APIKeys) > 0 {
 			groupManager := NewGroupKeyManager(groupID, group.Name, group.APIKeys, group.RotationStrategy)
+			
+			// 如果有数据库连接，从数据库加载密钥验证状态
+			if db != nil {
+				mgkm.loadKeyValidationStatusFromDB(groupID, groupManager)
+			}
+			
 			mgkm.groupManagers[groupID] = groupManager
 		}
 	}
@@ -576,6 +590,53 @@ func (mgkm *MultiGroupKeyManager) ValidateKeysForGroup(groupID string, newKeys [
 	}
 	
 	return validKeys, groupDuplicates, internalDuplicates
+}
+
+// loadKeyValidationStatusFromDB 从数据库加载密钥验证状态
+func (mgkm *MultiGroupKeyManager) loadKeyValidationStatusFromDB(groupID string, groupManager *GroupKeyManager) {
+	validationStatus, err := mgkm.database.GetAPIKeyValidationStatus(groupID)
+	if err != nil {
+		log.Printf("警告: 无法从数据库加载分组 %s 的密钥验证状态: %v", groupID, err)
+		return
+	}
+
+	// 更新密钥状态
+	validCount := 0
+	invalidCount := 0
+	for apiKey, status := range validationStatus {
+		if keyStatus, exists := groupManager.keyStatuses[apiKey]; exists {
+			// 更新验证状态
+			if isValid, ok := status["is_valid"].(*bool); ok && isValid != nil {
+				keyStatus.IsValid = isValid
+				// 重要：只有当密钥有效时才设置为活跃状态，无效的密钥保持活跃以便重试
+				if *isValid {
+					keyStatus.IsActive = true
+					validCount++
+				} else {
+					// 无效的密钥仍然保持活跃状态，但标记为无效
+					keyStatus.IsActive = true
+					invalidCount++
+				}
+			}
+			
+			// 更新验证错误信息
+			if validationError, ok := status["validation_error"].(*string); ok && validationError != nil {
+				keyStatus.ValidationError = *validationError
+			}
+			
+			// 更新最后验证时间
+			if lastValidatedAt, ok := status["last_validated_at"].(*string); ok && lastValidatedAt != nil {
+				if parsedTime, err := time.Parse("2006-01-02 15:04:05", *lastValidatedAt); err == nil {
+					keyStatus.LastValidated = &parsedTime
+				}
+			}
+			
+			keyStatus.UpdatedAt = time.Now()
+		}
+	}
+
+	log.Printf("已从数据库加载分组 %s 的密钥验证状态，共 %d 个密钥（有效: %d，无效: %d）",
+		groupID, len(validationStatus), validCount, invalidCount)
 }
 
 // Close 关闭管理器
