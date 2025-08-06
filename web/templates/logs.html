@@ -259,8 +259,9 @@
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                 <h2 class="text-xl font-bold text-gray-800">数据可视化</h2>
                 <div class="flex flex-wrap gap-2">
-                    <select x-model="chartTimeRange" @change="updateChartsWithTimeRange()" 
+                    <select x-model="chartTimeRange" @change="updateChartsWithTimeRange()"
                             class="px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">全部</option>
                         <option value="1h">最近1小时</option>
                         <option value="6h">最近6小时</option>
                         <option value="24h">最近24小时</option>
@@ -736,7 +737,7 @@
                 refreshInterval: null,
                 nextUpdateCountdown: 30,
                 countdownInterval: null,
-                chartTimeRange: '24h',
+                chartTimeRange: '',
                 chartsLoading: {
                     status: false,
                     model: false,
@@ -840,9 +841,13 @@
                     this.models = Array.from(models).sort();
                 },
 
-                applyFilters() {
+                async applyFilters() {
                     this.currentPage = 1;
-                    this.loadLogs();
+                    await this.loadLogs();
+                    // 筛选条件变化时也需要更新图表
+                    setTimeout(async () => {
+                        await this.updateCharts();
+                    }, 300);
                 },
 
                 async viewLogDetail(id) {
@@ -1268,8 +1273,8 @@
                     
                     if (this.fullscreenChart) {
                         // 延迟创建全屏图表，确保DOM已渲染
-                        setTimeout(() => {
-                            this.createFullscreenChart(chartId);
+                        setTimeout(async () => {
+                            await this.createFullscreenChart(chartId);
                         }, 100);
                     }
                 },
@@ -1286,7 +1291,7 @@
                 // 全屏图表实例
                 fullscreenChartInstance: null,
 
-                createFullscreenChart(chartId) {
+                async createFullscreenChart(chartId) {
                     const canvas = document.getElementById('fullscreenChart');
                     if (!canvas) return;
 
@@ -1300,31 +1305,49 @@
                     // 根据图表类型创建对应的全屏图表
                     switch(chartId) {
                         case 'statusChart':
-                            this.createFullscreenStatusChart(ctx);
+                            await this.createFullscreenStatusChart(ctx);
                             break;
                         case 'modelChart':
-                            this.createFullscreenModelChart(ctx);
+                            await this.createFullscreenModelChart(ctx);
                             break;
                         case 'tokenTrendChart':
-                            this.createFullscreenTokenTrendChart(ctx);
+                            await this.createFullscreenTokenTrendChart(ctx);
                             break;
                         case 'groupTokenChart':
-                            this.createFullscreenGroupTokenChart(ctx);
+                            await this.createFullscreenGroupTokenChart(ctx);
                             break;
                     }
                 },
 
-                createFullscreenStatusChart(ctx) {
-                    // 计算状态分布
-                    const statusCounts = {};
-                    this.logs.forEach(log => {
-                        const status = log.status_code === 200 ? 'success' : 'error';
-                        statusCounts[status] = (statusCounts[status] || 0) + 1;
-                    });
+                async createFullscreenStatusChart(ctx) {
+                    // 使用全局聚合数据
+                    let successCount = 0;
+                    let errorCount = 0;
+                    
+                    try {
+                        const params = new URLSearchParams();
+                        if (this.chartTimeRange) params.append('range', this.chartTimeRange);
+                        if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                        if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                        if (this.filters.model) params.append('model', this.filters.model);
+                        if (this.filters.stream) params.append('stream', this.filters.stream);
+                        
+                        const response = await fetch(`/admin/logs/stats/status?${params}`);
+                        const result = await response.json();
+                        
+                        if (result.success && result.data) {
+                            successCount = result.data.success || 0;
+                            errorCount = result.data.error || 0;
+                        }
+                    } catch (error) {
+                        console.error('Failed to fetch status stats for fullscreen:', error);
+                        successCount = this.successRequests || 0;
+                        errorCount = this.errorRequests || 0;
+                    }
 
-                    const labels = Object.keys(statusCounts);
-                    const data = Object.values(statusCounts);
-                    const colors = ['#10B981', '#EF4444', '#F59E0B', '#6B7280', '#8B5CF6', '#06B6D4'];
+                    const labels = ['成功请求', '失败请求'];
+                    const data = [successCount, errorCount];
+                    const colors = ['#10B981', '#EF4444'];
 
                     this.fullscreenChartInstance = new Chart(ctx, {
                         type: 'doughnut',
@@ -1332,7 +1355,7 @@
                             labels: labels,
                             datasets: [{
                                 data: data,
-                                backgroundColor: colors.slice(0, labels.length),
+                                backgroundColor: colors,
                                 borderWidth: 2,
                                 borderColor: '#ffffff'
                             }]
@@ -1353,7 +1376,7 @@
                                     callbacks: {
                                         label: function(context) {
                                             const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                            const percentage = ((context.parsed * 100) / total).toFixed(1);
+                                            const percentage = total > 0 ? ((context.parsed * 100) / total).toFixed(1) : 0;
                                             return `${context.label}: ${context.parsed} (${percentage}%)`;
                                         }
                                     }
@@ -1363,20 +1386,44 @@
                     });
                 },
 
-                createFullscreenModelChart(ctx) {
-                    // 计算模型使用分布
-                    const modelCounts = {};
-                    this.logs.forEach(log => {
-                        const model = log.model || 'unknown';
-                        modelCounts[model] = (modelCounts[model] || 0) + 1;
-                    });
-
-                    const sortedModels = Object.entries(modelCounts)
-                        .sort(([,a], [,b]) => b - a)
-                        .slice(0, 10);
-
-                    const labels = sortedModels.map(([model]) => model);
-                    const data = sortedModels.map(([,count]) => count);
+                async createFullscreenModelChart(ctx) {
+                    // 使用全局聚合数据
+                    let labels = [];
+                    let data = [];
+                    
+                    try {
+                        const params = new URLSearchParams();
+                        if (this.chartTimeRange) params.append('range', this.chartTimeRange);
+                        if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                        if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                        if (this.filters.model) params.append('model', this.filters.model);
+                        if (this.filters.stream) params.append('stream', this.filters.stream);
+                        
+                        const response = await fetch(`/admin/logs/stats/models?${params}`);
+                        const result = await response.json();
+                        
+                        if (result.success && result.stats) {
+                            const sortedModels = result.stats
+                                .sort((a, b) => b.total_requests - a.total_requests)
+                                .slice(0, 10);
+                            
+                            labels = sortedModels.map(stat => stat.model || 'unknown');
+                            data = sortedModels.map(stat => stat.total_requests || 0);
+                        }
+                    } catch (error) {
+                        console.error('Failed to fetch model stats for fullscreen:', error);
+                        // 降级到使用分页数据
+                        const modelCounts = {};
+                        this.logs.forEach(log => {
+                            const model = log.model || 'unknown';
+                            modelCounts[model] = (modelCounts[model] || 0) + 1;
+                        });
+                        const sortedModels = Object.entries(modelCounts)
+                            .sort(([,a], [,b]) => b - a)
+                            .slice(0, 10);
+                        labels = sortedModels.map(([model]) => model);
+                        data = sortedModels.map(([,count]) => count);
+                    }
 
                     this.fullscreenChartInstance = new Chart(ctx, {
                         type: 'bar',
@@ -1425,27 +1472,50 @@
                     });
                 },
 
-                createFullscreenTokenTrendChart(ctx) {
-                    // 按时间聚合Token使用情况
-                    const tokenByTime = {};
-                    this.logs.forEach(log => {
-                        if (log.created_at && log.tokens_used) {
-                            const date = new Date(log.created_at).toISOString().split('T')[0];
-                            if (!tokenByTime[date]) {
-                                tokenByTime[date] = { total: 0, success: 0, count: 0 };
-                            }
-                            tokenByTime[date].total += parseInt(log.tokens_used) || 0;
-                            if (log.status_code === 200) {
-                                tokenByTime[date].success += parseInt(log.tokens_used) || 0;
-                            }
-                            tokenByTime[date].count += 1;
+                async createFullscreenTokenTrendChart(ctx) {
+                    // 使用全局聚合数据
+                    let labels = [];
+                    let totalTokens = [];
+                    let successTokens = [];
+                    
+                    try {
+                        const params = new URLSearchParams();
+                        if (this.chartTimeRange) params.append('range', this.chartTimeRange);
+                        if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                        if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                        if (this.filters.model) params.append('model', this.filters.model);
+                        if (this.filters.stream) params.append('stream', this.filters.stream);
+                        
+                        const response = await fetch(`/admin/logs/stats/tokens-timeline?${params}`);
+                        const result = await response.json();
+                        
+                        if (result.success && result.data) {
+                            const timeline = result.data.sort((a, b) => a.date.localeCompare(b.date));
+                            labels = timeline.map(point => point.date);
+                            totalTokens = timeline.map(point => point.total || 0);
+                            successTokens = timeline.map(point => point.success || 0);
                         }
-                    });
-
-                    const sortedDates = Object.keys(tokenByTime).sort();
-                    const labels = sortedDates;
-                    const totalTokens = sortedDates.map(date => tokenByTime[date].total);
-                    const successTokens = sortedDates.map(date => tokenByTime[date].success);
+                    } catch (error) {
+                        console.error('Failed to fetch tokens timeline for fullscreen:', error);
+                        // 降级到使用分页数据
+                        const tokenByTime = {};
+                        this.logs.forEach(log => {
+                            if (log.created_at && log.tokens_used) {
+                                const date = new Date(log.created_at).toISOString().split('T')[0];
+                                if (!tokenByTime[date]) {
+                                    tokenByTime[date] = { total: 0, success: 0 };
+                                }
+                                tokenByTime[date].total += parseInt(log.tokens_used) || 0;
+                                if (log.status_code === 200) {
+                                    tokenByTime[date].success += parseInt(log.tokens_used) || 0;
+                                }
+                            }
+                        });
+                        const sortedDates = Object.keys(tokenByTime).sort();
+                        labels = sortedDates;
+                        totalTokens = sortedDates.map(date => tokenByTime[date].total);
+                        successTokens = sortedDates.map(date => tokenByTime[date].success);
+                    }
 
                     this.fullscreenChartInstance = new Chart(ctx, {
                         type: 'line',
@@ -1549,30 +1619,43 @@
                     });
                 },
 
-                // 实际的图表创建方法
-                createStatusChart() {
+                // 实际的图表创建方法 - 使用全局聚合数据
+                async createStatusChart() {
                     const canvas = document.getElementById('statusChart');
                     if (!canvas) return;
 
                     const ctx = canvas.getContext('2d');
                     
-                    // 计算状态分布
-                    const statusCounts = {};
-                    this.logs.forEach(log => {
-                        const status = log.status_code === 200 ? 'success' : 'error';
-                        statusCounts[status] = (statusCounts[status] || 0) + 1;
-                    });
+                    // 从全局聚合数据获取状态分布
+                    let successCount = 0;
+                    let errorCount = 0;
+                    
+                    try {
+                        // 构建查询参数
+                        const params = new URLSearchParams();
+                        if (this.chartTimeRange) params.append('range', this.chartTimeRange);
+                        if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                        if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                        if (this.filters.model) params.append('model', this.filters.model);
+                        if (this.filters.stream) params.append('stream', this.filters.stream);
+                        
+                        const response = await fetch(`/admin/logs/stats/status?${params}`);
+                        const result = await response.json();
+                        
+                        if (result.success && result.data) {
+                            successCount = result.data.success || 0;
+                            errorCount = result.data.error || 0;
+                        }
+                    } catch (error) {
+                        console.error('Failed to fetch status stats:', error);
+                        // 降级到使用现有统计数据
+                        successCount = this.successRequests || 0;
+                        errorCount = this.errorRequests || 0;
+                    }
 
-                    const labels = Object.keys(statusCounts);
-                    const data = Object.values(statusCounts);
-                    const colors = [
-                        '#10B981', // 成功 - 绿色
-                        '#EF4444', // 错误 - 红色
-                        '#F59E0B', // 警告 - 黄色
-                        '#6B7280', // 其他 - 灰色
-                        '#8B5CF6', // 紫色
-                        '#06B6D4'  // 青色
-                    ];
+                    const labels = ['成功请求', '失败请求'];
+                    const data = [successCount, errorCount];
+                    const colors = ['#10B981', '#EF4444']; // 绿色和红色
 
                     this.chartInstances.status = new Chart(ctx, {
                         type: 'doughnut',
@@ -1580,7 +1663,7 @@
                             labels: labels,
                             datasets: [{
                                 data: data,
-                                backgroundColor: colors.slice(0, labels.length),
+                                backgroundColor: colors,
                                 borderWidth: 2,
                                 borderColor: '#ffffff'
                             }]
@@ -1600,7 +1683,7 @@
                                     callbacks: {
                                         label: function(context) {
                                             const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                            const percentage = ((context.parsed * 100) / total).toFixed(1);
+                                            const percentage = total > 0 ? ((context.parsed * 100) / total).toFixed(1) : 0;
                                             return `${context.label}: ${context.parsed} (${percentage}%)`;
                                         }
                                     }
@@ -1610,26 +1693,51 @@
                     });
                 },
 
-                createModelChart() {
+                async createModelChart() {
                     const canvas = document.getElementById('modelChart');
                     if (!canvas) return;
 
                     const ctx = canvas.getContext('2d');
                     
-                    // 计算模型使用分布
-                    const modelCounts = {};
-                    this.logs.forEach(log => {
-                        const model = log.model || 'unknown';
-                        modelCounts[model] = (modelCounts[model] || 0) + 1;
-                    });
-
-                    // 取前10个最常用的模型
-                    const sortedModels = Object.entries(modelCounts)
-                        .sort(([,a], [,b]) => b - a)
-                        .slice(0, 10);
-
-                    const labels = sortedModels.map(([model]) => model);
-                    const data = sortedModels.map(([,count]) => count);
+                    // 从全局聚合数据获取模型使用分布
+                    let labels = [];
+                    let data = [];
+                    
+                    try {
+                        // 构建查询参数
+                        const params = new URLSearchParams();
+                        if (this.chartTimeRange) params.append('range', this.chartTimeRange);
+                        if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                        if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                        if (this.filters.model) params.append('model', this.filters.model);
+                        if (this.filters.stream) params.append('stream', this.filters.stream);
+                        
+                        const response = await fetch(`/admin/logs/stats/models?${params}`);
+                        const result = await response.json();
+                        
+                        if (result.success && result.stats) {
+                            // 取前10个最常用的模型
+                            const sortedModels = result.stats
+                                .sort((a, b) => b.total_requests - a.total_requests)
+                                .slice(0, 10);
+                            
+                            labels = sortedModels.map(stat => stat.model || 'unknown');
+                            data = sortedModels.map(stat => stat.total_requests || 0);
+                        }
+                    } catch (error) {
+                        console.error('Failed to fetch model stats:', error);
+                        // 降级到使用分页数据进行粗略统计
+                        const modelCounts = {};
+                        this.logs.forEach(log => {
+                            const model = log.model || 'unknown';
+                            modelCounts[model] = (modelCounts[model] || 0) + 1;
+                        });
+                        const sortedModels = Object.entries(modelCounts)
+                            .sort(([,a], [,b]) => b - a)
+                            .slice(0, 10);
+                        labels = sortedModels.map(([model]) => model);
+                        data = sortedModels.map(([,count]) => count);
+                    }
 
                     this.chartInstances.model = new Chart(ctx, {
                         type: 'bar',
@@ -1676,32 +1784,56 @@
                     });
                 },
 
-                createTokenTrendChart() {
+                async createTokenTrendChart() {
                     const canvas = document.getElementById('tokenTrendChart');
                     if (!canvas) return;
 
                     const ctx = canvas.getContext('2d');
                     
-                    // 按时间聚合Token使用情况
-                    const tokenByTime = {};
-                    this.logs.forEach(log => {
-                        if (log.created_at && log.tokens_used) {
-                            const date = new Date(log.created_at).toISOString().split('T')[0];
-                            if (!tokenByTime[date]) {
-                                tokenByTime[date] = { total: 0, success: 0, count: 0 };
-                            }
-                            tokenByTime[date].total += parseInt(log.tokens_used) || 0;
-                            if (log.status_code === 200) {
-                                tokenByTime[date].success += parseInt(log.tokens_used) || 0;
-                            }
-                            tokenByTime[date].count += 1;
+                    // 从全局聚合数据获取Token时间线
+                    let labels = [];
+                    let totalTokens = [];
+                    let successTokens = [];
+                    
+                    try {
+                        // 构建查询参数
+                        const params = new URLSearchParams();
+                        if (this.chartTimeRange) params.append('range', this.chartTimeRange);
+                        if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                        if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                        if (this.filters.model) params.append('model', this.filters.model);
+                        if (this.filters.stream) params.append('stream', this.filters.stream);
+                        
+                        const response = await fetch(`/admin/logs/stats/tokens-timeline?${params}`);
+                        const result = await response.json();
+                        
+                        if (result.success && result.data) {
+                            const timeline = result.data.sort((a, b) => a.date.localeCompare(b.date));
+                            labels = timeline.map(point => point.date);
+                            totalTokens = timeline.map(point => point.total || 0);
+                            successTokens = timeline.map(point => point.success || 0);
                         }
-                    });
-
-                    const sortedDates = Object.keys(tokenByTime).sort();
-                    const labels = sortedDates;
-                    const totalTokens = sortedDates.map(date => tokenByTime[date].total);
-                    const successTokens = sortedDates.map(date => tokenByTime[date].success);
+                    } catch (error) {
+                        console.error('Failed to fetch tokens timeline:', error);
+                        // 降级到使用分页数据进行粗略统计
+                        const tokenByTime = {};
+                        this.logs.forEach(log => {
+                            if (log.created_at && log.tokens_used) {
+                                const date = new Date(log.created_at).toISOString().split('T')[0];
+                                if (!tokenByTime[date]) {
+                                    tokenByTime[date] = { total: 0, success: 0 };
+                                }
+                                tokenByTime[date].total += parseInt(log.tokens_used) || 0;
+                                if (log.status_code === 200) {
+                                    tokenByTime[date].success += parseInt(log.tokens_used) || 0;
+                                }
+                            }
+                        });
+                        const sortedDates = Object.keys(tokenByTime).sort();
+                        labels = sortedDates;
+                        totalTokens = sortedDates.map(date => tokenByTime[date].total);
+                        successTokens = sortedDates.map(date => tokenByTime[date].success);
+                    }
 
                     this.chartInstances.tokenTrend = new Chart(ctx, {
                         type: 'line',
@@ -1740,30 +1872,55 @@
                     });
                 },
 
-                createGroupTokenChart() {
+                async createGroupTokenChart() {
                     const canvas = document.getElementById('groupTokenChart');
                     if (!canvas) return;
 
                     const ctx = canvas.getContext('2d');
                     
-                    // 按提供商分组统计Token
-                    const groupTokens = {};
-                    this.logs.forEach(log => {
-                        if (log.provider_group && log.tokens_used) {
-                            const group = log.provider_group;
-                            if (!groupTokens[group]) {
-                                groupTokens[group] = { total: 0, success: 0 };
-                            }
-                            groupTokens[group].total += parseInt(log.tokens_used) || 0;
-                            if (log.status_code === 200) {
-                                groupTokens[group].success += parseInt(log.tokens_used) || 0;
-                            }
+                    // 从全局聚合数据获取分组Token统计
+                    let labels = [];
+                    let totalData = [];
+                    let successData = [];
+                    
+                    try {
+                        // 构建查询参数
+                        const params = new URLSearchParams();
+                        if (this.chartTimeRange) params.append('range', this.chartTimeRange);
+                        if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                        if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                        if (this.filters.model) params.append('model', this.filters.model);
+                        if (this.filters.stream) params.append('stream', this.filters.stream);
+                        
+                        const response = await fetch(`/admin/logs/stats/group-tokens?${params}`);
+                        const result = await response.json();
+                        
+                        if (result.success && result.data) {
+                            const groups = result.data.slice(0, 10); // 取前10个分组
+                            labels = groups.map(group => group.group || '-');
+                            totalData = groups.map(group => group.total || 0);
+                            successData = groups.map(group => group.success || 0);
                         }
-                    });
-
-                    const labels = Object.keys(groupTokens);
-                    const totalData = labels.map(group => groupTokens[group].total);
-                    const successData = labels.map(group => groupTokens[group].success);
+                    } catch (error) {
+                        console.error('Failed to fetch group tokens stats:', error);
+                        // 降级到使用分页数据进行粗略统计
+                        const groupTokens = {};
+                        this.logs.forEach(log => {
+                            if (log.provider_group && log.tokens_used) {
+                                const group = log.provider_group;
+                                if (!groupTokens[group]) {
+                                    groupTokens[group] = { total: 0, success: 0 };
+                                }
+                                groupTokens[group].total += parseInt(log.tokens_used) || 0;
+                                if (log.status_code === 200) {
+                                    groupTokens[group].success += parseInt(log.tokens_used) || 0;
+                                }
+                            }
+                        });
+                        labels = Object.keys(groupTokens);
+                        totalData = labels.map(group => groupTokens[group].total);
+                        successData = labels.map(group => groupTokens[group].success);
+                    }
 
                     this.chartInstances.groupToken = new Chart(ctx, {
                         type: 'bar',

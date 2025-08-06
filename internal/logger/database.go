@@ -601,6 +601,81 @@ func (d *Database) GetModelStats() ([]*ModelStats, error) {
 	return stats, nil
 }
 
+// GetModelStatsWithFilter 基于筛选与时间范围的模型统计
+func (d *Database) GetModelStatsWithFilter(filter *LogFilter) ([]*ModelStats, error) {
+	var (
+		conds []string
+		args  []interface{}
+	)
+	
+	// 基础条件：只统计成功的请求
+	conds = append(conds, "status_code = 200")
+	
+	if filter != nil {
+		if filter.ProxyKeyName != "" {
+			conds = append(conds, "proxy_key_name = ?")
+			args = append(args, filter.ProxyKeyName)
+		}
+		if filter.ProviderGroup != "" {
+			conds = append(conds, "provider_group = ?")
+			args = append(args, filter.ProviderGroup)
+		}
+		if filter.Model != "" {
+			conds = append(conds, "model = ?")
+			args = append(args, filter.Model)
+		}
+		if filter.Stream != "" {
+			if filter.Stream == "true" {
+				conds = append(conds, "is_stream = 1")
+			} else if filter.Stream == "false" {
+				conds = append(conds, "is_stream = 0")
+			}
+		}
+		if filter.StartTime != nil {
+			conds = append(conds, "created_at >= ?")
+			args = append(args, filter.StartTime.Format("2006-01-02 15:04:05"))
+		}
+		if filter.EndTime != nil {
+			conds = append(conds, "created_at <= ?")
+			args = append(args, filter.EndTime.Format("2006-01-02 15:04:05"))
+		}
+	}
+	
+	query := `
+	SELECT
+		model,
+		COUNT(*) as total_requests,
+		SUM(tokens_used) as total_tokens,
+		AVG(duration) as avg_duration
+	FROM request_logs`
+	
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	
+	query += " GROUP BY model ORDER BY total_requests DESC"
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query model stats with filter: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []*ModelStats
+	for rows.Next() {
+		stat := &ModelStats{}
+		err := rows.Scan(
+			&stat.Model, &stat.TotalRequests, &stat.TotalTokens, &stat.AvgDuration,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan model stats: %w", err)
+		}
+		stats = append(stats, stat)
+	}
+
+	return stats, nil
+}
+
 // GetTotalTokensStats 获取总token数统计
 func (d *Database) GetTotalTokensStats() (*TotalTokensStats, error) {
 	query := `

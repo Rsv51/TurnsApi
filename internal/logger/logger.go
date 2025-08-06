@@ -111,6 +111,11 @@ func (r *RequestLogger) GetModelStats() ([]*ModelStats, error) {
 	return r.db.GetModelStats()
 }
 
+// GetModelStatsWithFilter 获取模型统计（支持筛选与时间范围）
+func (r *RequestLogger) GetModelStatsWithFilter(filter *LogFilter) ([]*ModelStats, error) {
+	return r.db.GetModelStatsWithFilter(filter)
+}
+
 // GetStatusStats 获取状态分布聚合（支持筛选与时间范围）
 func (r *RequestLogger) GetStatusStats(filter *LogFilter) (*StatusStats, error) {
 	return r.db.GetStatusStats(filter)

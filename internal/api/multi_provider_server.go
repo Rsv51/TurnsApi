@@ -1845,8 +1845,8 @@ func (s *MultiProviderServer) handleModelStats(c *gin.Context) {
 		return
 	}
 
-	// 目前后台只支持全量统计，无时间/筛选参数。
-	stats, err := s.requestLogger.GetModelStats()
+	filter := s.parseLogFilterWithRange(c)
+	stats, err := s.requestLogger.GetModelStatsWithFilter(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,

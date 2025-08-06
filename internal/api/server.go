@@ -920,8 +920,11 @@ func (s *Server) handleModelStats(c *gin.Context) {
 		return
 	}
 
-	// 获取模型统计
-	stats, err := s.requestLogger.GetModelStats()
+	// 解析筛选条件和时间范围
+	filter := s.parseLogFilterWithRange(c)
+	
+	// 获取模型统计（支持筛选）
+	stats, err := s.requestLogger.GetModelStatsWithFilter(filter)
 	if err != nil {
 		log.Printf("Failed to get model stats: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
