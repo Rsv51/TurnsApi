@@ -111,6 +111,21 @@ func (r *RequestLogger) GetModelStats() ([]*ModelStats, error) {
 	return r.db.GetModelStats()
 }
 
+// GetStatusStats 获取状态分布聚合（支持筛选与时间范围）
+func (r *RequestLogger) GetStatusStats(filter *LogFilter) (*StatusStats, error) {
+	return r.db.GetStatusStats(filter)
+}
+
+// GetTokensTimeline 获取tokens时间序列（支持筛选与时间范围）
+func (r *RequestLogger) GetTokensTimeline(filter *LogFilter) ([]*TimelinePoint, error) {
+	return r.db.GetTokensTimeline(filter)
+}
+
+// GetGroupTokensStats 获取按分组聚合的tokens（支持筛选与时间范围）
+func (r *RequestLogger) GetGroupTokensStats(filter *LogFilter) ([]*GroupTokensStat, error) {
+	return r.db.GetGroupTokensStats(filter)
+}
+
 // GetRequestCount 获取请求总数
 func (r *RequestLogger) GetRequestCount(proxyKeyName, providerGroup string) (int64, error) {
 	return r.db.GetRequestCount(proxyKeyName, providerGroup)

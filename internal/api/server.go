@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"strings"
 
 	"turnsapi/internal"
 	"turnsapi/internal/auth"
@@ -193,6 +194,10 @@ func (s *Server) setupRoutes() {
 		admin.GET("/logs/stats/api-keys", s.handleAPIKeyStats)
 		admin.GET("/logs/stats/models", s.handleModelStats)
 		admin.GET("/logs/stats/tokens", s.handleTotalTokensStats)
+		// 新增聚合统计端点（与多提供商模式保持一致）
+		admin.GET("/logs/stats/status", s.handleStatusDistribution)
+		admin.GET("/logs/stats/tokens-timeline", s.handleTokensTimeline)
+		admin.GET("/logs/stats/group-tokens", s.handleGroupTokens)
 	}
 
 	// 静态文件
@@ -851,6 +856,61 @@ func (s *Server) handleAPIKeyStats(c *gin.Context) {
 }
 
 // handleModelStats 获取模型统计
+func (s *Server) parseLogFilterWithRange(c *gin.Context) *logger.LogFilter {
+	// 解析通用筛选
+	f := &logger.LogFilter{
+		ProxyKeyName:  c.Query("proxy_key_name"),
+		ProviderGroup: c.Query("provider_group"),
+		Model:         c.Query("model"),
+		Status:        c.Query("status"),
+		Stream:        c.Query("stream"),
+	}
+	// 解析 range: 支持 1h,6h,24h,7d,30d
+	rangeStr := c.DefaultQuery("range", "")
+	now := time.Now()
+	var start *time.Time
+	var end *time.Time
+	switch strings.ToLower(strings.TrimSpace(rangeStr)) {
+	case "1h":
+		st := now.Add(-1 * time.Hour); start, end = &st, &now
+	case "6h":
+		st := now.Add(-6 * time.Hour); start, end = &st, &now
+	case "24h":
+		st := now.Add(-24 * time.Hour); start, end = &st, &now
+	case "7d":
+		st := now.AddDate(0, 0, -7); start, end = &st, &now
+	case "30d":
+		st := now.AddDate(0, 0, -30); start, end = &st, &now
+	}
+	// 显式起止时间（优先于range）
+	parseTime := func(s string) *time.Time {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+		layouts := []string{"2006-01-02 15:04:05", "2006-01-02", time.RFC3339}
+		for _, layout := range layouts {
+			if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+				return &t
+			}
+		}
+		return nil
+	}
+	if qs := c.Query("start"); qs != "" {
+		if t := parseTime(qs); t != nil {
+			start = t
+		}
+	}
+	if qe := c.Query("end"); qe != "" {
+		if t := parseTime(qe); t != nil {
+			end = t
+		}
+	}
+	f.StartTime = start
+	f.EndTime = end
+	return f
+}
+ 
 func (s *Server) handleModelStats(c *gin.Context) {
 	if s.requestLogger == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -878,6 +938,60 @@ func (s *Server) handleModelStats(c *gin.Context) {
 }
 
 // handleTotalTokensStats 获取总token数统计
+func (s *Server) handleStatusDistribution(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "Request logger not available"})
+		return
+	}
+	filter := s.parseLogFilterWithRange(c)
+	stats, err := s.requestLogger.GetStatusStats(filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Failed to get status stats: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"success": stats.Success,
+			"error":   stats.Error,
+		},
+	})
+}
+ 
+func (s *Server) handleTokensTimeline(c *gin.Context) {
+	if s.requestLogger == nil {
+	c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "Request logger not available"})
+		return
+	}
+	filter := s.parseLogFilterWithRange(c)
+	points, err := s.requestLogger.GetTokensTimeline(filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Failed to get tokens timeline: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    points,
+	})
+}
+ 
+func (s *Server) handleGroupTokens(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "Request logger not available"})
+		return
+	}
+	filter := s.parseLogFilterWithRange(c)
+	stats, err := s.requestLogger.GetGroupTokensStats(filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Failed to get group tokens: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+ 
 func (s *Server) handleTotalTokensStats(c *gin.Context) {
 	if s.requestLogger == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{

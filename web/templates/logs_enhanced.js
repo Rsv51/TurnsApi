@@ -396,6 +396,13 @@ function enhancedLogsManagement() {
             heatmap: false
         },
         chartTimeRange: '24h',
+        // 全局聚合图表数据（与分页数据解耦）
+        chartData: {
+            status: { success: 0, error: 0 },
+            model: { labels: [], counts: [] },
+            tokenTrend: { labels: [], total: [], success: [] },
+            groupToken: { labels: [], total: [], success: [] }
+        },
         
         // 实时更新
         autoRefresh: false,
@@ -412,6 +419,7 @@ function enhancedLogsManagement() {
             await this.loadLogs();
             await this.loadStats();
             await this.loadTokenStats();
+            await this.loadChartData();
             
             // 延迟初始化图表，确保数据已加载
             setTimeout(() => {
@@ -554,6 +562,133 @@ function enhancedLogsManagement() {
             this.loadLogs();
         },
 
+        // 加载全量聚合图表数据（后端端点占位，若缺失则降级为现有stats或前端聚合）
+        async loadChartData() {
+            try {
+                // 组装查询参数（时间范围 + 过滤器）
+                const params = new URLSearchParams({ range: this.chartTimeRange });
+                if (this.filters.proxyKeyName) params.append('proxy_key_name', this.filters.proxyKeyName);
+                if (this.filters.providerGroup) params.append('provider_group', this.filters.providerGroup);
+                if (this.filters.model) params.append('model', this.filters.model);
+                if (this.filters.status) params.append('status', this.filters.status);
+                if (this.filters.stream) params.append('stream', this.filters.stream);
+
+                // 并行请求后端聚合端点；若端点暂未实现，将尝试降级
+                const fetchSafe = async (url) => {
+                    try {
+                        const res = await fetch(url);
+                        if (!res.ok) return null;
+                        const json = await res.json();
+                        return json;
+                    } catch (e) {
+                        return null;
+                    }
+                };
+
+                // 目前后端仅有 models 和 tokens 汇总，不含 status、timeline、group-tokens 专用端点
+                const [statusRes, modelRes, tokenTrendRes, groupTokenRes] = await Promise.all([
+                    fetchSafe(`/admin/logs/stats/status?${params}`),
+                    fetchSafe(`/admin/logs/stats/models?${params}`),
+                    fetchSafe(`/admin/logs/stats/tokens-timeline?${params}`),
+                    fetchSafe(`/admin/logs/stats/group-tokens?${params}`)
+                ]);
+
+                // 状态分布：若无后端端点，则用现有 this.successRequests / this.errorRequests 兜底
+                if (statusRes && statusRes.success) {
+                    const s = statusRes.data || statusRes.stats || {};
+                    this.chartData.status = {
+                        success: Number(s.success || 0),
+                        error: Number(s.error || 0)
+                    };
+                } else {
+                    this.chartData.status = {
+                        success: Number(this.successRequests || 0),
+                        error: Number(this.errorRequests || 0)
+                    };
+                }
+
+                // 模型统计：优先用后端返回（有全量统计），若失败则从分页数据临时聚合兜底
+                if (modelRes && modelRes.success) {
+                    const list = modelRes.data || modelRes.stats || [];
+                    const top = list
+                        .map(it => ({
+                            label: it.model || it.label || 'unknown',
+                            count: Number(it.total_requests ?? it.count ?? 0)
+                        }))
+                        .sort((a, b) => b.count - a.count)
+                        .slice(0, 10);
+                    this.chartData.model = {
+                        labels: top.map(i => i.label),
+                        counts: top.map(i => i.count)
+                    };
+                } else {
+                    // 兜底：从当前分页 this.logs 粗略统计（不准确，但可用）
+                    const modelStats = {};
+                    this.logs.forEach(log => {
+                        if (log.model) modelStats[log.model] = (modelStats[log.model] || 0) + 1;
+                    });
+                    const sorted = Object.entries(modelStats).sort((a, b) => b[1] - a[1]).slice(0, 10);
+                    this.chartData.model = {
+                        labels: sorted.map(([m]) => m),
+                        counts: sorted.map(([, c]) => c)
+                    };
+                }
+
+                // Token 时间线：若无端点，则空数据（或可基于分页数据粗略聚合）
+                if (tokenTrendRes && tokenTrendRes.success) {
+                    const series = tokenTrendRes.data || tokenTrendRes.stats || [];
+                    const sorted = [...series].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+                    this.chartData.tokenTrend = {
+                        labels: sorted.map(i => i.date),
+                        total: sorted.map(i => Number(i.total || 0)),
+                        success: sorted.map(i => Number(i.success || 0))
+                    };
+                } else {
+                    // 兜底：用分页数据粗略汇总
+                    const tokenByDate = {};
+                    this.logs.forEach(log => {
+                        if (log.tokens_used && log.tokens_used > 0 && log.created_at) {
+                            const date = new Date(log.created_at).toISOString().split('T')[0];
+                            tokenByDate[date] = (tokenByDate[date] || 0) + (log.tokens_used || 0);
+                        }
+                    });
+                    const sorted = Object.entries(tokenByDate)
+                        .map(([date, tokens]) => ({ date, total: tokens, success: 0 }))
+                        .sort((a, b) => a.date.localeCompare(b.date));
+                    this.chartData.tokenTrend = {
+                        labels: sorted.map(i => i.date),
+                        total: sorted.map(i => Number(i.total || 0)),
+                        success: sorted.map(() => 0)
+                    };
+                }
+
+                // 分组 Token 聚合：若无端点，则从分页数据粗略聚合
+                if (groupTokenRes && groupTokenRes.success) {
+                    const groups = groupTokenRes.data || groupTokenRes.stats || [];
+                    this.chartData.groupToken = {
+                        labels: groups.map(i => i.group || i.label || '-'),
+                        total: groups.map(i => Number(i.total || 0)),
+                        success: groups.map(i => Number(i.success || 0))
+                    };
+                } else {
+                    const groupTokens = {};
+                    this.logs.forEach(log => {
+                        if (log.provider_group && log.tokens_used && log.tokens_used > 0) {
+                            groupTokens[log.provider_group] = (groupTokens[log.provider_group] || 0) + (log.tokens_used || 0);
+                        }
+                    });
+                    const sortedGroups = Object.entries(groupTokens).sort((a, b) => b[1] - a[1]).slice(0, 10);
+                    this.chartData.groupToken = {
+                        labels: sortedGroups.map(([g]) => g),
+                        total: sortedGroups.map(([, t]) => Number(t || 0)),
+                        success: sortedGroups.map(() => 0)
+                    };
+                }
+            } catch (e) {
+                console.error('Error loading chart aggregated data:', e);
+            }
+        },
+
         async viewLogDetail(id) {
             try {
                 const response = await fetch(`/admin/logs/${id}`);
@@ -574,6 +709,7 @@ function enhancedLogsManagement() {
             await this.loadLogs();
             await this.loadStats();
             await this.loadTokenStats();
+            await this.loadChartData();
             // 延迟更新图表，确保数据已加载
             setTimeout(() => {
                 this.updateCharts();
@@ -844,8 +980,9 @@ function enhancedLogsManagement() {
             this.createGroupTokenChart();
         },
 
-        updateChartsWithTimeRange() {
-            // 根据时间范围更新图表数据
+        async updateChartsWithTimeRange() {
+            // 根据时间范围更新图表数据（从后端聚合端点获取）
+            await this.loadChartData();
             this.updateCharts();
         },
 
@@ -878,14 +1015,17 @@ function enhancedLogsManagement() {
             this.fullscreenChart = false;
         },
 
-        // 创建状态分布饼图
+        // 创建状态分布饼图（使用全局聚合数据）
         createStatusChart() {
             this.chartsLoading.status = true;
+
+            const success = this.chartData?.status?.success ?? this.successRequests ?? 0;
+            const error = this.chartData?.status?.error ?? this.errorRequests ?? 0;
 
             const data = {
                 labels: ['成功请求', '失败请求'],
                 datasets: [{
-                    data: [this.successRequests, this.errorRequests],
+                    data: [success, error],
                     backgroundColor: [CHART_COLORS.secondary, CHART_COLORS.danger],
                     borderColor: ['#fff', '#fff'],
                     borderWidth: 2,
@@ -902,7 +1042,7 @@ function enhancedLogsManagement() {
                         callbacks: {
                             label: function(context) {
                                 const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = Math.round((context.parsed / total) * 100);
+                                const percentage = total > 0 ? Math.round((context.parsed / total) * 100) : 0;
                                 return `${context.label}: ${context.parsed} (${percentage}%)`;
                             }
                         }
@@ -913,27 +1053,20 @@ function enhancedLogsManagement() {
             this.chartsLoading.status = false;
         },
 
-        // 创建模型使用统计柱状图
+        // 创建模型使用统计柱状图（使用全局聚合数据）
         createModelChart() {
             this.chartsLoading.model = true;
 
-            // 统计模型使用情况
-            const modelStats = {};
-            this.logs.forEach(log => {
-                if (log.model) {
-                    modelStats[log.model] = (modelStats[log.model] || 0) + 1;
-                }
-            });
+            const labels = this.chartData?.model?.labels ?? [];
+            const counts = this.chartData?.model?.counts ?? [];
 
-            const sortedModels = Object.entries(modelStats)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 8); // 只显示前8个
+            const displayLabels = labels.map(m => m && m.length > 15 ? m.substring(0, 15) + '...' : (m || '未知模型'));
 
             const data = {
-                labels: sortedModels.map(([model]) => model.length > 15 ? model.substring(0, 15) + '...' : model),
+                labels: displayLabels.slice(0, 8),
                 datasets: [{
                     label: '使用次数',
-                    data: sortedModels.map(([, count]) => count),
+                    data: counts.slice(0, 8),
                     backgroundColor: CHART_COLORS.primary,
                     borderColor: CHART_COLORS.primary,
                     borderWidth: 1,
@@ -946,59 +1079,60 @@ function enhancedLogsManagement() {
             this.chartsLoading.model = false;
         },
 
-        // 创建Token使用趋势图
+        // 创建Token使用趋势图（使用全局聚合数据）
         createTokenTrendChart() {
             this.chartsLoading.tokenTrend = true;
 
-            // 按日期统计token使用
-            const tokenByDate = {};
-            this.logs.forEach(log => {
-                if (log.tokens_used && log.tokens_used > 0 && log.created_at) {
-                    const date = new Date(log.created_at).toISOString().split('T')[0]; // YYYY-MM-DD格式
-                    tokenByDate[date] = (tokenByDate[date] || 0) + log.tokens_used;
-                }
-            });
+            const labels = this.chartData?.tokenTrend?.labels ?? [];
+            const total = this.chartData?.tokenTrend?.total ?? [];
+            const success = this.chartData?.tokenTrend?.success ?? [];
 
-            const sortedDates = Object.entries(tokenByDate)
-                .map(([date, tokens]) => ({ x: new Date(date), y: tokens }))
-                .sort((a, b) => a.x - b.x)
-                .slice(-7); // 最近7天
+            // 构造时间序列点
+            const seriesTotal = labels.map((d, i) => ({ x: new Date(d), y: total[i] || 0 }));
+            const seriesSuccess = labels.map((d, i) => ({ x: new Date(d), y: success[i] || 0 }));
 
             const data = {
-                datasets: [{
-                    label: 'Token使用量',
-                    data: sortedDates,
-                    borderColor: CHART_COLORS.purple,
-                    backgroundColor: CHART_COLORS.purple + '20',
-                    fill: true,
-                    tension: 0.4,
-                    pointBackgroundColor: CHART_COLORS.purple,
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2,
-                    pointRadius: 5,
-                    pointHoverRadius: 7
-                }]
+                datasets: [
+                    {
+                        label: 'Token总量',
+                        data: seriesTotal,
+                        borderColor: CHART_COLORS.purple,
+                        backgroundColor: CHART_COLORS.purple + '20',
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: CHART_COLORS.purple,
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    },
+                    {
+                        label: '成功Token',
+                        data: seriesSuccess,
+                        borderColor: CHART_COLORS.secondary,
+                        backgroundColor: CHART_COLORS.secondary + '20',
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: CHART_COLORS.secondary,
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointRadius: 3,
+                        pointHoverRadius: 5
+                    }
+                ]
             };
 
             chartManager.createLineChart('tokenTrendChart', data);
             this.chartsLoading.tokenTrend = false;
         },
 
-        // 创建各分组Token数统计图
+        // 创建各分组Token数统计图（使用全局聚合数据）
         createGroupTokenChart() {
             this.chartsLoading.groupToken = true;
 
-            // 统计各分组的Token使用情况
-            const groupTokens = {};
-            this.logs.forEach(log => {
-                if (log.provider_group && log.tokens_used && log.tokens_used > 0) {
-                    groupTokens[log.provider_group] = (groupTokens[log.provider_group] || 0) + log.tokens_used;
-                }
-            });
-
-            const sortedGroups = Object.entries(groupTokens)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 8); // 只显示前8个分组
+            const labels = this.chartData?.groupToken?.labels ?? [];
+            const total = this.chartData?.groupToken?.total ?? [];
+            const success = this.chartData?.groupToken?.success ?? [];
 
             const colors = [
                 CHART_COLORS.primary, CHART_COLORS.secondary, CHART_COLORS.accent,
@@ -1006,17 +1140,30 @@ function enhancedLogsManagement() {
                 CHART_COLORS.cyan, CHART_COLORS.lime
             ];
 
+            const viewLabels = labels.map(g => g && g.length > 12 ? g.substring(0, 12) + '...' : (g || '-'));
+
             const data = {
-                labels: sortedGroups.map(([group]) => group.length > 12 ? group.substring(0, 12) + '...' : group),
-                datasets: [{
-                    label: 'Token使用量',
-                    data: sortedGroups.map(([, tokens]) => tokens),
-                    backgroundColor: colors.slice(0, sortedGroups.length),
-                    borderColor: colors.slice(0, sortedGroups.length),
-                    borderWidth: 1,
-                    borderRadius: 4,
-                    borderSkipped: false,
-                }]
+                labels: viewLabels.slice(0, 8),
+                datasets: [
+                    {
+                        label: 'Token总量',
+                        data: total.slice(0, 8),
+                        backgroundColor: colors.slice(0, Math.min(8, labels.length)),
+                        borderColor: colors.slice(0, Math.min(8, labels.length)),
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        borderSkipped: false,
+                    },
+                    {
+                        label: '成功Token',
+                        data: success.slice(0, 8),
+                        backgroundColor: CHART_COLORS.secondary + '55',
+                        borderColor: CHART_COLORS.secondary,
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        borderSkipped: false,
+                    }
+                ]
             };
 
             chartManager.createBarChart('groupTokenChart', data, {

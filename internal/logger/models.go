@@ -85,6 +85,9 @@ type LogFilter struct {
 	Stream        string `json:"stream"` // "true" 或 "false"
 	Limit         int    `json:"limit"`
 	Offset        int    `json:"offset"`
+	// 新增时间范围筛选：包含起止时间（闭区间），为空则不限制
+	StartTime *time.Time `json:"start_time"`
+	EndTime   *time.Time `json:"end_time"`
 }
 
 // TotalTokensStats 总token数统计结构
@@ -94,3 +97,25 @@ type TotalTokensStats struct {
 	TotalRequests   int64 `json:"total_requests"`
 	SuccessRequests int64 `json:"success_requests"`
 }
+
+// StatusStats 状态分布聚合
+type StatusStats struct {
+	Success int64 `json:"success"`
+	Error   int64 `json:"error"`
+}
+
+// TimelinePoint tokens 时间序列点
+type TimelinePoint struct {
+	Date    string `json:"date"`   // "YYYY-MM-DD" 或 "YYYY-MM-DD HH:00"
+	Total   int64  `json:"total"`  // 总 tokens
+	Success int64  `json:"success"`// 成功 tokens
+}
+
+// GroupTokensStat 分组 tokens 聚合
+type GroupTokensStat struct {
+	Group   string `json:"group"`
+	Total   int64  `json:"total"`
+	Success int64  `json:"success"`
+}
+
+// NOTE: duplicate TotalTokensStats definition removed
