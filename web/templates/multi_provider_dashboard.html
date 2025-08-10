@@ -1744,6 +1744,50 @@
                                         </button>
                                         <button
                                             type="button"
+                                            @click="bulkDeleteInvalidKeysFromServer()"
+                                            x-show="showEditGroupModal && editingGroupId"
+                                            :disabled="bulkDeletingInvalidKeys"
+                                            class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                        >
+                                            <svg
+                                                x-show="!bulkDeletingInvalidKeys"
+                                                class="w-4 h-4 mr-1"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                viewBox="0 0 24 24"
+                                            >
+                                                <path
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    stroke-width="2"
+                                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                                ></path>
+                                            </svg>
+                                            <svg
+                                                x-show="bulkDeletingInvalidKeys"
+                                                class="animate-spin w-4 h-4 mr-1"
+                                                fill="none"
+                                                viewBox="0 0 24 24"
+                                            >
+                                                <circle
+                                                    class="opacity-25"
+                                                    cx="12"
+                                                    cy="12"
+                                                    r="10"
+                                                    stroke="currentColor"
+                                                    stroke-width="4"
+                                                ></circle>
+                                                <path
+                                                    class="opacity-75"
+                                                    fill="currentColor"
+                                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                                ></path>
+                                            </svg>
+                                            <span x-show="!bulkDeletingInvalidKeys">一键删除失效密钥</span>
+                                            <span x-show="bulkDeletingInvalidKeys">删除中...</span>
+                                        </button>
+                                        <button
+                                            type="button"
                                             @click="deleteSelectedKeys()"
                                             x-show="selectedKeys.length > 0"
                                             class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
@@ -1883,6 +1927,49 @@
                                                             </svg>
                                                         </div>
                                                     </div>
+                                                </div>
+                                                <!-- 强制设置密钥状态按钮 -->
+                                                <div class="flex items-center space-x-1">
+                                                    <button
+                                                        type="button"
+                                                        @click="forceSetKeyStatus(index + keyPageOffset, 'valid')"
+                                                        :disabled="forcingKeyStatus[index + keyPageOffset]"
+                                                        class="text-green-600 hover:text-green-800 p-1 rounded"
+                                                        title="强制设为有效"
+                                                        x-show="keyValidationStatus[index + keyPageOffset] !== 'valid'"
+                                                    >
+                                                        <svg
+                                                            class="w-4 h-4"
+                                                            fill="currentColor"
+                                                            viewBox="0 0 20 20"
+                                                        >
+                                                            <path
+                                                                fill-rule="evenodd"
+                                                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                                                clip-rule="evenodd"
+                                                            ></path>
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        @click="forceSetKeyStatus(index + keyPageOffset, 'invalid')"
+                                                        :disabled="forcingKeyStatus[index + keyPageOffset]"
+                                                        class="text-red-600 hover:text-red-800 p-1 rounded"
+                                                        title="强制设为无效"
+                                                        x-show="keyValidationStatus[index + keyPageOffset] !== 'invalid'"
+                                                    >
+                                                        <svg
+                                                            class="w-4 h-4"
+                                                            fill="currentColor"
+                                                            viewBox="0 0 20 20"
+                                                        >
+                                                            <path
+                                                                fill-rule="evenodd"
+                                                                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                                                                clip-rule="evenodd"
+                                                            ></path>
+                                                        </svg>
+                                                    </button>
                                                 </div>
                                                 <button
                                                     type="button"
@@ -3655,6 +3742,8 @@
                     validatingKeys: false,
                     keyValidationStatus: {}, // 存储每个密钥的验证状态
                     invalidKeyIndexes: [], // 存储无效密钥的索引
+                    forcingKeyStatus: {}, // 存储正在强制设置状态的密钥索引
+                    bulkDeletingInvalidKeys: false, // 一键删除失效密钥的状态
 
                     // 模型相关
                     availableModels: [],
@@ -4475,8 +4564,8 @@
                                 this.forceRefreshFormUI();
                             }, 200);
 
-                            // 移除自动加载验证状态，改为手动触发
-                            // await this.loadKeyValidationStatus(groupId);
+                            // 自动加载验证状态以确保一键删除功能正常工作
+                            await this.loadKeyValidationStatus(groupId);
                         } catch (error) {
                             console.error("获取分组数据失败:", error);
                             alert("获取分组数据失败，请稍后重试");
@@ -4788,6 +4877,8 @@
                         this.batchKeysText = "";
                         this.keyValidationStatus = {};
                         this.invalidKeyIndexes = [];
+                        this.forcingKeyStatus = {};
+                        this.bulkDeletingInvalidKeys = false;
 
                         // 重置JSON参数相关字段
                         this.requestParamsText = "";
@@ -5316,6 +5407,184 @@
                         } catch (error) {
                             console.error('导出密钥失败:', error);
                             this.showMessage("导出密钥失败: " + error.message, "error");
+                        }
+                    },
+
+                    // 强制设置密钥状态
+                    async forceSetKeyStatus(keyIndex, status) {
+                        const apiKey = this.groupFormData.api_keys[keyIndex];
+                        if (!apiKey || !apiKey.trim()) {
+                            this.showMessage("密钥不能为空", "error");
+                            return;
+                        }
+
+                        if (!this.editingGroupId) {
+                            this.showMessage("只能在编辑模式下强制设置密钥状态", "error");
+                            return;
+                        }
+
+                        // 设置加载状态
+                        this.forcingKeyStatus[keyIndex] = true;
+                        this.forcingKeyStatus = { ...this.forcingKeyStatus };
+
+                        try {
+                            const response = await fetch(
+                                `/admin/groups/${this.editingGroupId}/keys/force-status`,
+                                {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json",
+                                    },
+                                    body: JSON.stringify({
+                                        api_key: apiKey.trim(),
+                                        status: status,
+                                    }),
+                                }
+                            );
+
+                            const result = await response.json();
+
+                            if (response.ok && result.success) {
+                                // 更新本地验证状态
+                                this.keyValidationStatus[keyIndex] = status;
+                                this.keyValidationStatus = { ...this.keyValidationStatus };
+
+                                // 更新失效密钥索引列表
+                                if (status === 'invalid') {
+                                    if (!this.invalidKeyIndexes.includes(keyIndex)) {
+                                        this.invalidKeyIndexes.push(keyIndex);
+                                    }
+                                } else {
+                                    const invalidIndex = this.invalidKeyIndexes.indexOf(keyIndex);
+                                    if (invalidIndex > -1) {
+                                        this.invalidKeyIndexes.splice(invalidIndex, 1);
+                                    }
+                                }
+
+                                // 刷新提供商状态列表以更新分组列表中的信息
+                                await this.loadProviderStatuses();
+                                
+                                // 重新加载持久化验证状态以更新密钥状态统计
+                                await this.loadPersistedValidationStatus(false);
+
+                                this.showMessage(
+                                    `密钥状态已强制设置为${status === 'valid' ? '有效' : '无效'}`,
+                                    "success"
+                                );
+                            } else {
+                                throw new Error(result.message || "设置密钥状态失败");
+                            }
+                        } catch (error) {
+                            console.error("强制设置密钥状态失败:", error);
+                            this.showMessage(
+                                "强制设置密钥状态失败: " + error.message,
+                                "error"
+                            );
+                        } finally {
+                            // 清除加载状态
+                            this.forcingKeyStatus[keyIndex] = false;
+                            this.forcingKeyStatus = { ...this.forcingKeyStatus };
+                        }
+                    },
+
+                    // 一键删除失效密钥（从服务器）
+                    async bulkDeleteInvalidKeysFromServer() {
+                        if (!this.editingGroupId) {
+                            this.showMessage("只能在编辑模式下删除失效密钥", "error");
+                            return;
+                        }
+
+                        // 检查本地是否有失效密钥
+                        const localInvalidCount = this.getInvalidKeyCount();
+                        
+                        // 如果本地没有失效密钥，但分组列表显示有失效密钥，提示用户先检测
+                        if (localInvalidCount === 0) {
+                            const groupKeyStatus = this.keyStatus.groups && this.keyStatus.groups[this.editingGroupId];
+                            if (groupKeyStatus && groupKeyStatus.invalid_keys > 0) {
+                                this.showMessage(
+                                    `检测到 ${groupKeyStatus.invalid_keys} 个失效密钥，但本地验证状态未加载。请先点击"验证密钥"按钮检测密钥状态，然后再执行删除操作。`,
+                                    "error"
+                                );
+                                return;
+                            } else {
+                                this.showMessage("没有失效密钥需要删除", "info");
+                                return;
+                            }
+                        }
+
+                        if (!confirm(`确定要删除 ${localInvalidCount} 个失效密钥吗？此操作不可恢复。`)) {
+                            return;
+                        }
+
+                        this.bulkDeletingInvalidKeys = true;
+
+                        try {
+                            const response = await fetch(
+                                `/admin/groups/${this.editingGroupId}/keys/invalid`,
+                                {
+                                    method: "DELETE",
+                                }
+                            );
+
+                            const result = await response.json();
+
+                            if (response.ok && result.success) {
+                                // 从本地数组中移除失效密钥
+                                const validKeys = [];
+                                this.groupFormData.api_keys.forEach((key, index) => {
+                                    if (key.trim() && this.keyValidationStatus[index] !== 'invalid') {
+                                        validKeys.push(key);
+                                    } else if (!key.trim()) {
+                                        // 保留空密钥项
+                                        validKeys.push(key);
+                                    }
+                                });
+
+                                // 如果所有密钥都被删除了，至少保留一个空项
+                                if (validKeys.filter(k => k.trim()).length === 0) {
+                                    validKeys.push("");
+                                }
+
+                                this.groupFormData.api_keys = validKeys;
+
+                                // 重建验证状态
+                                const newValidationStatus = {};
+                                const newInvalidIndexes = [];
+                                this.groupFormData.api_keys.forEach((key, newIndex) => {
+                                    // 只保留有效密钥的状态
+                                    if (key.trim()) {
+                                        newValidationStatus[newIndex] = 'valid'; // 假设剩余的都是有效的
+                                    }
+                                });
+
+                                this.keyValidationStatus = newValidationStatus;
+                                this.invalidKeyIndexes = newInvalidIndexes;
+
+                                // 重置页码和选中状态
+                                this.selectedKeys = [];
+                                this.keyPage = 1;
+
+                                // 刷新提供商状态列表以更新分组列表中的信息
+                                await this.loadProviderStatuses();
+                                
+                                // 重新加载持久化验证状态以更新密钥状态统计
+                                await this.loadPersistedValidationStatus(false);
+
+                                this.showMessage(
+                                    `成功删除 ${result.deleted_count} 个失效密钥`,
+                                    "success"
+                                );
+                            } else {
+                                throw new Error(result.message || "删除失效密钥失败");
+                            }
+                        } catch (error) {
+                            console.error("一键删除失效密钥失败:", error);
+                            this.showMessage(
+                                "一键删除失效密钥失败: " + error.message,
+                                "error"
+                            );
+                        } finally {
+                            this.bulkDeletingInvalidKeys = false;
                         }
                     },
 

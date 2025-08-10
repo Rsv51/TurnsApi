@@ -311,9 +311,6 @@ func NewMultiGroupKeyManagerWithDB(config *internal.Config, db *database.GroupsD
 		}
 	}
 
-	// 完全移除定时健康检查逻辑，改为基于实际请求结果的实时状态更新
-	log.Printf("多分组密钥管理器初始化完成，已移除定时健康检查")
-
 	return mgkm
 }
 
@@ -435,6 +432,135 @@ func (mgkm *MultiGroupKeyManager) UpdateKeyStatus(groupID, apiKey string, isSucc
 			groupManager.ReportError(apiKey, errorMsg)
 		}
 	}
+}
+
+// ForceSetKeyStatus 强制设置密钥状态（管理员功能）
+func (mgkm *MultiGroupKeyManager) ForceSetKeyStatus(groupID, apiKey string, isValid bool, reason string) error {
+	mgkm.mutex.RLock()
+	groupManager, exists := mgkm.groupManagers[groupID]
+	mgkm.mutex.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("group %s not found", groupID)
+	}
+
+	groupManager.mutex.Lock()
+	defer groupManager.mutex.Unlock()
+
+	// 检查密钥是否存在
+	if status, exists := groupManager.keyStatuses[apiKey]; exists {
+		// 更新密钥状态
+		status.IsValid = &isValid
+		status.ValidationError = reason
+		status.UpdatedAt = time.Now()
+		
+		// 如果设置为有效，清除错误信息并激活密钥
+		if isValid {
+			status.IsActive = true
+			status.ErrorCount = 0
+			status.LastError = ""
+		}
+		
+		log.Printf("强制设置密钥状态: 分组=%s, 密钥=%s, 有效=%v, 原因=%s",
+			groupID, groupManager.maskKey(apiKey), isValid, reason)
+		
+		return nil
+	}
+
+	return fmt.Errorf("API key not found in group %s", groupID)
+}
+
+// GetInvalidKeys 获取指定分组中的所有无效密钥
+func (mgkm *MultiGroupKeyManager) GetInvalidKeys(groupID string) ([]string, error) {
+	mgkm.mutex.RLock()
+	groupManager, exists := mgkm.groupManagers[groupID]
+	mgkm.mutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("group %s not found", groupID)
+	}
+
+	groupManager.mutex.RLock()
+	defer groupManager.mutex.RUnlock()
+
+	var invalidKeys []string
+	for _, key := range groupManager.keys {
+		if status, exists := groupManager.keyStatuses[key]; exists {
+			if status.IsValid != nil && !*status.IsValid {
+				invalidKeys = append(invalidKeys, key)
+			}
+		}
+	}
+
+	return invalidKeys, nil
+}
+
+// GetValidKeys 获取指定分组中的所有有效密钥
+func (mgkm *MultiGroupKeyManager) GetValidKeys(groupID string) ([]string, error) {
+	mgkm.mutex.RLock()
+	groupManager, exists := mgkm.groupManagers[groupID]
+	mgkm.mutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("group %s not found", groupID)
+	}
+
+	groupManager.mutex.RLock()
+	defer groupManager.mutex.RUnlock()
+
+	var validKeys []string
+	for _, key := range groupManager.keys {
+		if status, exists := groupManager.keyStatuses[key]; exists {
+			// 如果没有验证状态或验证状态为有效，则认为是有效密钥
+			if status.IsValid == nil || *status.IsValid {
+				validKeys = append(validKeys, key)
+			}
+		}
+	}
+
+	return validKeys, nil
+}
+
+// GetKeyValidationSummary 获取分组密钥验证状态摘要
+func (mgkm *MultiGroupKeyManager) GetKeyValidationSummary(groupID string) (map[string]interface{}, error) {
+	mgkm.mutex.RLock()
+	groupManager, exists := mgkm.groupManagers[groupID]
+	mgkm.mutex.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("group %s not found", groupID)
+	}
+
+	groupManager.mutex.RLock()
+	defer groupManager.mutex.RUnlock()
+
+	validCount := 0
+	invalidCount := 0
+	unknownCount := 0
+	totalCount := len(groupManager.keys)
+
+	for _, key := range groupManager.keys {
+		if status, exists := groupManager.keyStatuses[key]; exists {
+			if status.IsValid == nil {
+				unknownCount++
+			} else if *status.IsValid {
+				validCount++
+			} else {
+				invalidCount++
+			}
+		} else {
+			unknownCount++
+		}
+	}
+
+	return map[string]interface{}{
+		"group_id":      groupID,
+		"group_name":    groupManager.groupName,
+		"total_keys":    totalCount,
+		"valid_keys":    validCount,
+		"invalid_keys":  invalidCount,
+		"unknown_keys":  unknownCount,
+	}, nil
 }
 
 // GetKeyHealthStatus 获取密钥健康状态统计

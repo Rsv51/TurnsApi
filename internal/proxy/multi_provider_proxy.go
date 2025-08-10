@@ -319,36 +319,166 @@ func (p *MultiProviderProxy) handleRequestWithRetry(
 	routeReq *router.RouteRequest,
 	startTime time.Time,
 ) bool {
-	// 智能故障转移：优先在分组内重试，然后跨分组重试
+	// 智能故障转移：优先在分组间轮换重试，最多重试3个密钥
 	return p.handleRequestWithSmartFailover(c, req, routeReq, startTime)
 }
 
 // handleRequestWithSmartFailover 实现智能故障转移机制
+// 新策略：优先在分组间轮换重试，最后再在分组内重试，最多重试3个密钥即停止
 func (p *MultiProviderProxy) handleRequestWithSmartFailover(
 	c *gin.Context,
 	req *providers.ChatCompletionRequest,
 	routeReq *router.RouteRequest,
 	startTime time.Time,
 ) bool {
-	// 获取初始路由结果
-	routeResult, err := p.providerRouter.RouteWithRetry(routeReq)
-	if err != nil {
-		log.Printf("Failed to route request: %v", err)
+	// 获取支持该模型的所有分组
+	candidateGroups := p.providerRouter.GetGroupsForModel(req.Model, routeReq.AllowedGroups)
+	if len(candidateGroups) == 0 {
+		log.Printf("没有可用分组支持模型 %s", req.Model)
 		return false
 	}
 
-	// 步骤1：在选中的分组内尝试所有可用密钥
-	success := p.tryGroupWithAllKeys(c, req, routeResult, startTime)
-	if success {
-		return true
-	}
+	log.Printf("开始分组间轮换重试，支持模型 %s 的分组: %v", req.Model, candidateGroups)
 
-	// 步骤2：如果分组内所有密钥都失败，尝试其他允许的分组
-	log.Printf("分组 %s 内所有密钥均失败，尝试故障转移到其他分组", routeResult.GroupID)
-	return p.tryFailoverToOtherGroups(c, req, routeReq, routeResult.GroupID, startTime)
+	// 使用新的分组间轮换重试策略，最多重试3个密钥
+	return p.tryGroupRotationWithLimit(c, req, routeReq, candidateGroups, startTime, 3)
 }
 
-// tryGroupWithAllKeys 在指定分组内尝试所有可用密钥
+// tryGroupRotationWithLimit 分组间轮换重试，最多重试指定数量的密钥
+func (p *MultiProviderProxy) tryGroupRotationWithLimit(
+	c *gin.Context,
+	req *providers.ChatCompletionRequest,
+	routeReq *router.RouteRequest,
+	candidateGroups []string,
+	startTime time.Time,
+	maxRetries int,
+) bool {
+	// 为每个分组准备密钥列表
+	groupKeys := make(map[string][]string)
+	for _, groupID := range candidateGroups {
+		// 检查RPM限制
+		if !p.rpmLimiter.Allow(groupID) {
+			log.Printf("分组 %s 超出RPM限制，跳过", groupID)
+			continue
+		}
+
+		// 获取分组的所有可用密钥状态
+		groupStatus, exists := p.keyManager.GetGroupStatus(groupID)
+		if !exists {
+			log.Printf("分组 %s 不存在或未启用，跳过", groupID)
+			continue
+		}
+
+		groupInfo := groupStatus.(map[string]interface{})
+		keyStatuses, ok := groupInfo["key_statuses"].(map[string]*keymanager.KeyStatus)
+		if !ok {
+			log.Printf("无法获取分组 %s 的密钥状态，跳过", groupID)
+			continue
+		}
+
+		// 按优先级排序密钥：活跃且有效的密钥优先
+		sortedKeys := p.sortKeysByPriority(keyStatuses)
+		if len(sortedKeys) > 0 {
+			groupKeys[groupID] = sortedKeys
+		}
+	}
+
+	if len(groupKeys) == 0 {
+		log.Printf("没有可用的分组和密钥")
+		return false
+	}
+
+	log.Printf("开始分组间轮换重试，可用分组: %v，最多重试 %d 个密钥", candidateGroups, maxRetries)
+
+	// 分组间轮换重试逻辑
+	retryCount := 0
+	keyIndex := 0
+
+	for retryCount < maxRetries {
+		// 轮换尝试每个分组的第keyIndex个密钥
+		for _, groupID := range candidateGroups {
+			keys, exists := groupKeys[groupID]
+			if !exists || keyIndex >= len(keys) {
+				continue // 该分组没有更多密钥
+			}
+
+			apiKey := keys[keyIndex]
+			retryCount++
+
+			log.Printf("轮换重试第 %d/%d 次：尝试分组 %s 的第 %d 个密钥: %s",
+				retryCount, maxRetries, groupID, keyIndex+1, p.maskKey(apiKey))
+
+			// 为该分组创建路由请求
+			groupRouteReq := &router.RouteRequest{
+				Model:         req.Model,
+				ProviderGroup: groupID,
+				AllowedGroups: routeReq.AllowedGroups,
+				ProxyKeyID:    routeReq.ProxyKeyID,
+			}
+
+			// 获取该分组的路由结果
+			routeResult, err := p.providerRouter.RouteWithRetry(groupRouteReq)
+			if err != nil {
+				log.Printf("分组 %s 路由失败: %v", groupID, err)
+				continue
+			}
+
+			// 更新提供商配置中的API密钥
+			p.providerRouter.UpdateProviderConfig(routeResult.ProviderConfig, apiKey)
+
+			// 尝试处理请求
+			var success bool
+			if req.Stream {
+				success = p.handleStreamingRequest(c, req, routeResult, apiKey, startTime)
+			} else {
+				success = p.handleNonStreamingRequest(c, req, routeResult, apiKey, startTime)
+			}
+
+			if success {
+				log.Printf("分组间轮换重试成功：分组 %s 密钥 %s", groupID, p.maskKey(apiKey))
+				// 报告成功使用
+				p.keyManager.ReportSuccess(groupID, apiKey)
+				// 实时更新数据库状态
+				p.updateKeyStatusInDatabase(groupID, apiKey, true, "")
+				return true
+			} else {
+				log.Printf("分组间轮换重试失败：分组 %s 密钥 %s", groupID, p.maskKey(apiKey))
+				// 报告使用失败
+				p.keyManager.ReportError(groupID, apiKey, "请求失败")
+				// 实时更新数据库状态
+				p.updateKeyStatusInDatabase(groupID, apiKey, false, "请求失败")
+			}
+
+			// 如果已达到最大重试次数，停止
+			if retryCount >= maxRetries {
+				log.Printf("已达到最大重试次数 %d，停止重试", maxRetries)
+				return false
+			}
+		}
+
+		// 进入下一轮（尝试每个分组的下一个密钥）
+		keyIndex++
+
+		// 检查是否所有分组都没有更多密钥
+		hasMoreKeys := false
+		for _, keys := range groupKeys {
+			if keyIndex < len(keys) {
+				hasMoreKeys = true
+				break
+			}
+		}
+
+		if !hasMoreKeys {
+			log.Printf("所有分组都没有更多密钥可尝试")
+			break
+		}
+	}
+
+	log.Printf("分组间轮换重试完成，共尝试 %d 次，全部失败", retryCount)
+	return false
+}
+
+// tryGroupWithAllKeys 在指定分组内尝试所有可用密钥（保留原函数用于其他地方调用）
 func (p *MultiProviderProxy) tryGroupWithAllKeys(
 	c *gin.Context,
 	req *providers.ChatCompletionRequest,
@@ -421,64 +551,6 @@ func (p *MultiProviderProxy) tryGroupWithAllKeys(
 	return false
 }
 
-// tryFailoverToOtherGroups 故障转移到其他允许的分组
-func (p *MultiProviderProxy) tryFailoverToOtherGroups(
-	c *gin.Context,
-	req *providers.ChatCompletionRequest,
-	routeReq *router.RouteRequest,
-	failedGroupID string,
-	startTime time.Time,
-) bool {
-	// 获取支持该模型的所有分组
-	candidateGroups := p.providerRouter.GetGroupsForModel(req.Model, routeReq.AllowedGroups)
-
-	// 移除已经失败的分组
-	var failoverGroups []string
-	for _, groupID := range candidateGroups {
-		if groupID != failedGroupID {
-			failoverGroups = append(failoverGroups, groupID)
-		}
-	}
-
-	if len(failoverGroups) == 0 {
-		log.Printf("没有其他可用分组进行故障转移")
-		return false
-	}
-
-	log.Printf("开始故障转移，尝试 %d 个其他分组: %v", len(failoverGroups), failoverGroups)
-
-	// 依次尝试每个备选分组
-	for i, groupID := range failoverGroups {
-		log.Printf("故障转移尝试第 %d/%d 个分组: %s", i+1, len(failoverGroups), groupID)
-
-		// 为该分组创建新的路由请求
-		failoverRouteReq := &router.RouteRequest{
-			Model:         req.Model,
-			ProviderGroup: groupID,
-			AllowedGroups: routeReq.AllowedGroups,
-			ProxyKeyID:    routeReq.ProxyKeyID,
-		}
-
-		// 获取该分组的路由结果
-		routeResult, err := p.providerRouter.RouteWithRetry(failoverRouteReq)
-		if err != nil {
-			log.Printf("故障转移到分组 %s 失败: %v", groupID, err)
-			continue
-		}
-
-		// 在该分组内尝试所有密钥
-		success := p.tryGroupWithAllKeys(c, req, routeResult, startTime)
-		if success {
-			log.Printf("故障转移到分组 %s 成功", groupID)
-			return true
-		}
-
-		log.Printf("故障转移到分组 %s 失败，尝试下一个", groupID)
-	}
-
-	log.Printf("所有故障转移尝试均失败，请求最终失败")
-	return false
-}
 
 // sortKeysByPriority 按优先级排序密钥
 func (p *MultiProviderProxy) sortKeysByPriority(keyStatuses map[string]*keymanager.KeyStatus) []string {
