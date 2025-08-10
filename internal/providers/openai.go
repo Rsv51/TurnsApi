@@ -155,6 +155,12 @@ func (p *OpenAIProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 	return streamChan, nil
 }
 
+// ChatCompletionStreamNative 发送原生格式流式聊天完成请求
+func (p *OpenAIProvider) ChatCompletionStreamNative(ctx context.Context, req *ChatCompletionRequest) (<-chan StreamResponse, error) {
+	// OpenAI格式本身就是标准格式，直接调用标准流式方法
+	return p.ChatCompletionStream(ctx, req)
+}
+
 // GetModels 获取可用模型列表
 func (p *OpenAIProvider) GetModels(ctx context.Context) (interface{}, error) {
 	endpoint := fmt.Sprintf("%s/models", p.Config.BaseURL)

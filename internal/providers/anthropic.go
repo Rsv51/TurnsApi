@@ -264,6 +264,102 @@ func (p *AnthropicProvider) ChatCompletionStream(ctx context.Context, req *ChatC
 	return streamChan, nil
 }
 
+// ChatCompletionStreamNative 发送原生格式流式聊天完成请求
+func (p *AnthropicProvider) ChatCompletionStreamNative(ctx context.Context, req *ChatCompletionRequest) (<-chan StreamResponse, error) {
+	// 转换请求格式并设置stream为true
+	anthropicReq, err := p.transformToAnthropicRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to transform request: %w", err)
+	}
+	anthropicReq.Stream = true
+	
+	endpoint := fmt.Sprintf("%s/v1/messages", p.Config.BaseURL)
+	
+	reqBody, err := json.Marshal(anthropicReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// 设置头部
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", p.Config.APIKey)
+	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Cache-Control", "no-cache")
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	
+	// 设置自定义头部
+	for key, value := range p.Config.Headers {
+		if key != "x-api-key" {
+			httpReq.Header.Set(key, value)
+		}
+	}
+	
+	resp, err := p.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	
+	streamChan := make(chan StreamResponse, 10)
+	
+	go func() {
+		defer close(streamChan)
+		defer resp.Body.Close()
+		
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			
+			// 发送原始Anthropic SSE数据
+			streamChan <- StreamResponse{
+				Data: []byte(line + "\n"),
+				Done: false,
+			}
+			
+			// 检查是否结束
+			if strings.HasPrefix(line, "data: ") {
+				data := strings.TrimPrefix(line, "data: ")
+				if data == "[DONE]" {
+					streamChan <- StreamResponse{
+						Done: true,
+					}
+					return
+				}
+				
+				// 解析事件类型以检查是否结束
+				var event map[string]interface{}
+				if err := json.Unmarshal([]byte(data), &event); err == nil {
+					if eventType, ok := event["type"].(string); ok && eventType == "message_stop" {
+						streamChan <- StreamResponse{
+							Done: true,
+						}
+						return
+					}
+				}
+			}
+		}
+		
+		if err := scanner.Err(); err != nil {
+			streamChan <- StreamResponse{
+				Error: err,
+				Done:  true,
+			}
+		}
+	}()
+	
+	return streamChan, nil
+}
+
 // GetModels 获取可用模型列表
 func (p *AnthropicProvider) GetModels(ctx context.Context) (interface{}, error) {
 	// 使用Anthropic官方的模型列表API
