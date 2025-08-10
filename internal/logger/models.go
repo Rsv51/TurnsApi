@@ -21,6 +21,10 @@ type RequestLog struct {
 	TokensEstimated bool      `json:"tokens_estimated" db:"tokens_estimated"` // 是否使用了备用估算方法
 	Error           string    `json:"error" db:"error"`
 	ClientIP        string    `json:"client_ip" db:"client_ip"` // 客户端IP地址
+	// 工具调用相关字段
+	HasToolCalls    bool      `json:"has_tool_calls" db:"has_tool_calls"`       // 是否包含工具调用
+	ToolCallsCount  int       `json:"tool_calls_count" db:"tool_calls_count"`   // 工具调用数量
+	ToolNames       string    `json:"tool_names" db:"tool_names"`               // 工具名称列表（JSON数组字符串）
 	CreatedAt       time.Time `json:"created_at" db:"created_at"`
 }
 
@@ -39,6 +43,10 @@ type RequestLogSummary struct {
 	TokensEstimated bool      `json:"tokens_estimated"`
 	Error           string    `json:"error"`
 	ClientIP        string    `json:"client_ip"`
+	// 工具调用相关字段
+	HasToolCalls    bool      `json:"has_tool_calls"`
+	ToolCallsCount  int       `json:"tool_calls_count"`
+	ToolNames       string    `json:"tool_names"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 

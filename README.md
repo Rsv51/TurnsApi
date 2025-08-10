@@ -5,19 +5,20 @@ TurnsAPI 是一个用 Go 语言开发的高性能多提供商 API 代理服务�
 ## 🚀 主要特性
 
 - **多提供商支持**: 支持 OpenAI、Google Gemini、Anthropic Claude、Azure OpenAI 等多个提供商
+- **完整工具调用支持**: 支持 OpenAI Function Calling、tool_choice 参数、并行工具调用等完整功能
 - **原生接口响应**: 支持返回提供商原生响应格式，暴露Gemini `/v1/beta` 原生API端点
 - **RPM限制功能**: 支持分组级别的每分钟请求数限制，防止API配额过度消耗
 - **智能密钥轮询**: 支持轮询、随机和最少使用三种轮询策略
 - **智能路由重试**: 自动故障转移和智能重试机制，提高请求成功率
 - **模型重命名映射**: 支持为不同分组的模型设置别名，统一模型名称管理
 - **JSON参数覆盖**: 支持分组级别的请求参数覆盖（temperature、max_tokens等）
-- **流式响应支持**: 完全支持 Server-Sent Events (SSE) 流式响应
+- **流式响应支持**: 完全支持 Server-Sent Events (SSE) 流式响应，包括工具调用流式响应
 - **高可用性**: 自动故障转移和重试机制
 - **实时监控**: Web 界面实时监控 API 密钥状态和服务性能
-- **请求日志记录**: 完整记录所有API请求和响应信息，支持按密钥分类存储
-- **日志分析**: 提供详细的统计分析，包括API密钥使用情况和模型调用统计
+- **请求日志记录**: 完整记录所有API请求和响应信息，包括工具调用详情，支持按密钥分类存储
+- **日志分析**: 提供详细的统计分析，包括API密钥使用情况、模型调用统计和工具调用分析
 - **安全认证**: 内置用户名密码认证系统，保护 API 和管理界面
-- **错误处理**: 智能错误处理和 API 密钥健康检查
+- **错误处理**: 智能错误处理和 API 密钥健康检查，包括工具调用相关错误处理
 - **生产就绪**: 支持 release 模式，优化生产环境性能
 - **易于配置**: 基于 YAML 的配置文件和Web界面管理
 
@@ -389,6 +390,305 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   }'
 ```
 
+### 工具调用 (Function Calling) API
+
+TurnsAPI 完全支持 OpenAI 的工具调用功能，包括函数定义、工具选择策略和并行工具调用。
+
+#### 基本工具调用示例
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer your-access-token" \
+ -d '{
+   "model": "gpt-4",
+   "messages": [
+     {
+       "role": "user",
+       "content": "What is the weather like in New York?"
+     }
+   ],
+   "tools": [
+     {
+       "type": "function",
+       "function": {
+         "name": "get_current_weather",
+         "description": "Get the current weather in a given location",
+         "parameters": {
+           "type": "object",
+           "properties": {
+             "location": {
+               "type": "string",
+               "description": "The city and state, e.g. San Francisco, CA"
+             },
+             "unit": {
+               "type": "string",
+               "enum": ["celsius", "fahrenheit"],
+               "description": "The unit of temperature"
+             }
+           },
+           "required": ["location"]
+         }
+       }
+     }
+   ],
+   "tool_choice": "auto"
+ }'
+```
+
+#### 工具调用响应示例
+
+```json
+{
+ "id": "chatcmpl-abc123",
+ "object": "chat.completion",
+ "created": 1699896916,
+ "model": "gpt-4",
+ "choices": [
+   {
+     "index": 0,
+     "message": {
+       "role": "assistant",
+       "content": null,
+       "tool_calls": [
+         {
+           "id": "call_abc123",
+           "type": "function",
+           "function": {
+             "name": "get_current_weather",
+             "arguments": "{\"location\": \"New York, NY\", \"unit\": \"fahrenheit\"}"
+           }
+         }
+       ]
+     },
+     "finish_reason": "tool_calls"
+   }
+ ],
+ "usage": {
+   "prompt_tokens": 82,
+   "completion_tokens": 17,
+   "total_tokens": 99
+ }
+}
+```
+
+#### 多工具定义示例
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer your-access-token" \
+ -d '{
+   "model": "gpt-4",
+   "messages": [
+     {
+       "role": "user",
+       "content": "Get the weather in New York and calculate 15% tip on a $50 bill"
+     }
+   ],
+   "tools": [
+     {
+       "type": "function",
+       "function": {
+         "name": "get_current_weather",
+         "description": "Get the current weather in a given location",
+         "parameters": {
+           "type": "object",
+           "properties": {
+             "location": {
+               "type": "string",
+               "description": "The city and state"
+             }
+           },
+           "required": ["location"]
+         }
+       }
+     },
+     {
+       "type": "function",
+       "function": {
+         "name": "calculate_tip",
+         "description": "Calculate tip amount for a bill",
+         "parameters": {
+           "type": "object",
+           "properties": {
+             "bill_amount": {
+               "type": "number",
+               "description": "The total bill amount"
+             },
+             "tip_percentage": {
+               "type": "number",
+               "description": "The tip percentage (e.g., 15 for 15%)"
+             }
+           },
+           "required": ["bill_amount", "tip_percentage"]
+         }
+       }
+     }
+   ],
+   "tool_choice": "auto",
+   "parallel_tool_calls": true
+ }'
+```
+
+#### 工具选择策略
+
+**1. 自动选择 (`"auto"`)** - 默认行为，模型自动决定是否调用工具：
+```json
+{
+ "tool_choice": "auto"
+}
+```
+
+**2. 强制调用工具 (`"required"`)** - 模型必须调用至少一个工具：
+```json
+{
+ "tool_choice": "required"
+}
+```
+
+**3. 禁用工具调用 (`"none"`)** - 模型不会调用任何工具：
+```json
+{
+ "tool_choice": "none"
+}
+```
+
+**4. 指定特定工具** - 强制调用指定的工具：
+```json
+{
+ "tool_choice": {
+   "type": "function",
+   "function": {
+     "name": "get_current_weather"
+   }
+ }
+}
+```
+
+#### 并行工具调用
+
+启用 `parallel_tool_calls` 允许模型在单次响应中调用多个工具：
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer your-access-token" \
+ -d '{
+   "model": "gpt-4",
+   "messages": [
+     {
+       "role": "user",
+       "content": "Get weather for both New York and London"
+     }
+   ],
+   "tools": [
+     {
+       "type": "function",
+       "function": {
+         "name": "get_current_weather",
+         "description": "Get the current weather in a given location",
+         "parameters": {
+           "type": "object",
+           "properties": {
+             "location": {
+               "type": "string",
+               "description": "The city and state"
+             }
+           },
+           "required": ["location"]
+         }
+       }
+     }
+   ],
+   "parallel_tool_calls": true
+ }'
+```
+
+#### 流式工具调用
+
+工具调用也支持流式响应：
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer your-access-token" \
+ -d '{
+   "model": "gpt-4",
+   "messages": [
+     {
+       "role": "user",
+       "content": "What is the weather like in Tokyo?"
+     }
+   ],
+   "tools": [
+     {
+       "type": "function",
+       "function": {
+         "name": "get_current_weather",
+         "description": "Get the current weather in a given location",
+         "parameters": {
+           "type": "object",
+           "properties": {
+             "location": {
+               "type": "string",
+               "description": "The city and state"
+             }
+           },
+           "required": ["location"]
+         }
+       }
+     }
+   ],
+   "stream": true
+ }'
+```
+
+#### 工具调用对话流程
+
+完整的工具调用对话通常包含以下步骤：
+
+1. **用户请求** - 用户提出需要工具协助的问题
+2. **模型工具调用** - 模型决定调用相应工具并返回工具调用信息
+3. **工具执行** - 客户端执行工具调用并获取结果
+4. **提交工具结果** - 将工具执行结果提交给模型
+5. **模型最终响应** - 模型基于工具结果生成最终回答
+
+```bash
+# 步骤4: 提交工具执行结果
+curl -X POST http://localhost:8080/v1/chat/completions \
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer your-access-token" \
+ -d '{
+   "model": "gpt-4",
+   "messages": [
+     {
+       "role": "user",
+       "content": "What is the weather like in New York?"
+     },
+     {
+       "role": "assistant",
+       "content": null,
+       "tool_calls": [
+         {
+           "id": "call_abc123",
+           "type": "function",
+           "function": {
+             "name": "get_current_weather",
+             "arguments": "{\"location\": \"New York, NY\"}"
+           }
+         }
+       ]
+     },
+     {
+       "role": "tool",
+       "tool_call_id": "call_abc123",
+       "content": "{\"temperature\": \"22°C\", \"condition\": \"sunny\", \"humidity\": \"60%\"}"
+     }
+   ]
+ }'
+```
+
 ### 支持的参数
 
 | 参数 | 类型 | 必需 | 说明 |
@@ -400,6 +700,43 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 | `max_tokens` | integer | 否 | 最大生成 token 数 |
 | `top_p` | number | 否 | Top-p 采样参数 |
 | `stop` | string/array | 否 | 停止词 |
+| `tools` | array | 否 | 工具定义数组，最多128个工具 |
+| `tool_choice` | string/object | 否 | 工具选择策略：`"auto"`, `"none"`, `"required"` 或指定工具对象 |
+| `parallel_tool_calls` | boolean | 否 | 是否允许并行工具调用，默认为 `true` |
+
+#### 工具调用参数详解
+
+**`tools` 参数结构**：
+```json
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "function_name",
+        "description": "Function description",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "param_name": {
+              "type": "string",
+              "description": "Parameter description"
+            }
+          },
+          "required": ["param_name"]
+        }
+      }
+    }
+  ]
+}
+```
+
+**工具调用限制**：
+- 最多支持 128 个工具定义
+- 函数名称长度：1-64 字符
+- 函数名称只能包含字母、数字、下划线和连字符
+- 函数描述最长 1024 字符
+- 参数 schema 最大 100KB
 
 ### Gemini 原生 API 端点
 
@@ -719,7 +1056,17 @@ auth:
 
 ## 📝 更新日志
 
-### v2.2.0 (最新版本)
+### v2.3.0 (最新版本)
+- 🛠️ **完整工具调用支持**: 全面支持 OpenAI Function Calling API，包括工具定义、工具选择和并行工具调用
+- 🔧 **工具调用验证**: 完善的工具调用参数验证，包括函数名称格式、参数schema验证等
+- 📊 **工具调用日志**: 请求日志系统增加工具调用信息记录，支持工具调用统计分析
+- 🚨 **工具调用错误处理**: 专门的工具调用错误类型和详细错误信息
+- 🧪 **全面测试覆盖**: 为工具调用功能编写了完整的单元测试和集成测试
+- 📖 **详细文档**: 完善的工具调用API文档和使用示例
+- 🔄 **流式工具调用**: 支持工具调用的流式响应处理
+- ⚡ **并行工具调用**: 支持在单次请求中并行调用多个工具
+
+### v2.2.0
 - 🌐 **原生接口响应**: 支持返回提供商原生响应格式，不进行OpenAI兼容转换
 - 🔗 **Gemini原生API端点**: 暴露 `/v1/beta` 端点，完全兼容Google Gemini原生API调用
 - ⚡ **RPM限制功能**: 支持分组级别的每分钟请求数限制，防止配额过度消耗

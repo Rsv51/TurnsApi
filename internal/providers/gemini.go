@@ -151,6 +151,15 @@ func (p *GeminiProvider) ChatCompletion(ctx context.Context, req *ChatCompletion
 		genConfig.StopSequences = req.Stop
 	}
 
+	// 转换工具定义为Gemini格式
+	if len(req.Tools) > 0 {
+		tools, err := p.convertToolsToGeminiFormat(req.Tools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert tools: %w", err)
+		}
+		genConfig.Tools = tools
+	}
+
 	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
 	// 但在转换为OpenAI格式时不包含思考内容
 	genConfig.ThinkingConfig = &genai.ThinkingConfig{
@@ -223,6 +232,15 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 		genConfig.StopSequences = req.Stop
 	}
 
+	// 转换工具定义为Gemini格式
+	if len(req.Tools) > 0 {
+		tools, err := p.convertToolsToGeminiFormat(req.Tools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert tools: %w", err)
+		}
+		genConfig.Tools = tools
+	}
+
 	// 启用思考模式 - 对于Gemini 2.5系列模型启用思考功能
 	// 但在转换为OpenAI格式时不包含思考内容
 	genConfig.ThinkingConfig = &genai.ThinkingConfig{
@@ -260,10 +278,10 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 				continue
 			}
 
-			// 提取文本内容，过滤掉思考内容
+			// 处理工具调用和文本内容
 			if len(chunk.Candidates) > 0 && len(chunk.Candidates[0].Content.Parts) > 0 {
 				for _, part := range chunk.Candidates[0].Content.Parts {
-					// 只处理非思考的文本内容
+					// 处理文本内容
 					if part.Text != "" && !part.Thought {
 						// 转义并创建OpenAI格式的流式数据
 						escapedContent := escapeJSONString(part.Text)
@@ -273,6 +291,19 @@ func (p *GeminiProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 						select {
 						case streamChan <- StreamResponse{
 							Data: []byte(streamData),
+							Done: false,
+						}:
+						case <-ctx.Done():
+							return
+						}
+					}
+					
+					// 处理工具调用
+					if part.FunctionCall != nil {
+						toolCallData := p.convertGeminiFunctionCallToOpenAI(part.FunctionCall, responseID, created, req.Model)
+						select {
+						case streamChan <- StreamResponse{
+							Data: []byte(toolCallData),
 							Done: false,
 						}:
 						case <-ctx.Done():
@@ -614,33 +645,68 @@ func (p *GeminiProvider) TransformResponse(resp interface{}) (*ChatCompletionRes
 	return nil, fmt.Errorf("invalid response type for Gemini provider")
 }
 
-// convertToGenaiContents 转换消息格式为官方SDK格式，支持多模态
+// convertToGenaiContents 转换消息格式为官方SDK格式，支持多模态和工具调用
 func (p *GeminiProvider) convertToGenaiContents(messages []ChatMessage) ([]*genai.Content, error) {
 	var contents []*genai.Content
 
 	for _, msg := range messages {
-		var role genai.Role
 		switch msg.Role {
 		case "user":
-			role = genai.RoleUser
+			// 处理用户消息
+			parts, err := p.convertMessageContentToParts(msg.Content)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert user message content: %w", err)
+			}
+			content := genai.NewContentFromParts(parts, genai.RoleUser)
+			contents = append(contents, content)
+
 		case "assistant":
-			role = genai.RoleModel
+			// 处理助手消息，可能包含工具调用
+			if len(msg.ToolCalls) > 0 {
+				// 如果包含工具调用，需要特殊处理
+				parts, err := p.convertAssistantMessageWithToolCalls(msg)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert assistant message with tool calls: %w", err)
+				}
+				content := genai.NewContentFromParts(parts, genai.RoleModel)
+				contents = append(contents, content)
+			} else {
+				// 普通助手消息
+				parts, err := p.convertMessageContentToParts(msg.Content)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert assistant message content: %w", err)
+				}
+				content := genai.NewContentFromParts(parts, genai.RoleModel)
+				contents = append(contents, content)
+			}
+
+		case "tool":
+			// 处理工具消息，需要转换为用户消息格式
+			parts, err := p.convertToolMessageToParts(msg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert tool message: %w", err)
+			}
+			content := genai.NewContentFromParts(parts, genai.RoleUser)
+			contents = append(contents, content)
+
 		case "system":
-			// 系统消息可以作为用户消息处理，或者添加到第一个用户消息中
-			role = genai.RoleUser
+			// 系统消息作为用户消息处理
+			parts, err := p.convertMessageContentToParts(msg.Content)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert system message content: %w", err)
+			}
+			content := genai.NewContentFromParts(parts, genai.RoleUser)
+			contents = append(contents, content)
+
 		default:
-			role = genai.RoleUser
+			// 未知角色，作为用户消息处理
+			parts, err := p.convertMessageContentToParts(msg.Content)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert message content for role %s: %w", msg.Role, err)
+			}
+			content := genai.NewContentFromParts(parts, genai.RoleUser)
+			contents = append(contents, content)
 		}
-
-		// 处理消息内容，支持多模态
-		parts, err := p.convertMessageContentToParts(msg.Content)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert message content: %w", err)
-		}
-
-		// 创建内容
-		content := genai.NewContentFromParts(parts, role)
-		contents = append(contents, content)
 	}
 
 	return contents, nil
@@ -808,42 +874,45 @@ func (p *GeminiProvider) convertGenaiToOpenAIResponse(result *genai.GenerateCont
 
 	// 提取文本内容，过滤掉思考内容
 	content := p.extractNonThoughtContent(result)
+	
+	// 提取工具调用
+	toolCalls := p.extractToolCalls(result)
 
 	// 构建OpenAI格式的响应
+	message := ChatCompletionMessage{
+		Role:    "assistant",
+		Content: content,
+	}
+	
+	// 如果有工具调用，添加到消息中
+	if len(toolCalls) > 0 {
+		message.ToolCalls = toolCalls
+	}
+
 	openaiResp := &ChatCompletionResponse{
 		ID:      responseID,
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   model,
-		Choices: []struct {
-			Index   int `json:"index"`
-			Message struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		}{
+		Choices: []ChatCompletionChoice{
 			{
-				Index: 0,
-				Message: struct {
-					Role    string `json:"role"`
-					Content string `json:"content"`
-				}{
-					Role:    "assistant",
-					Content: content,
-				},
+				Index:        0,
+				Message:      message,
 				FinishReason: "stop",
 			},
 		},
-		Usage: struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		}{
+		Usage: Usage{
 			PromptTokens:     0, // 官方SDK可能提供token计数，这里暂时设为0
 			CompletionTokens: 0,
 			TotalTokens:      0,
 		},
+	}
+
+	// 如果有使用统计信息，更新token计数
+	if result.UsageMetadata != nil {
+		openaiResp.Usage.PromptTokens = int(result.UsageMetadata.PromptTokenCount)
+		openaiResp.Usage.CompletionTokens = int(result.UsageMetadata.CandidatesTokenCount)
+		openaiResp.Usage.TotalTokens = int(result.UsageMetadata.TotalTokenCount)
 	}
 
 	return openaiResp, nil
@@ -998,4 +1067,139 @@ func (p *GeminiProvider) convertGeminiChunkToSSE(chunk *genai.GenerateContentRes
 
 	// 格式化为SSE
 	return []byte(fmt.Sprintf("data: %s\n\n", string(jsonData))), nil
+}
+
+// convertAssistantMessageWithToolCalls 转换包含工具调用的助手消息
+func (p *GeminiProvider) convertAssistantMessageWithToolCalls(msg ChatMessage) ([]*genai.Part, error) {
+	var parts []*genai.Part
+	
+	// 如果有文本内容，先添加文本部分
+	if msg.Content != nil {
+		textParts, err := p.convertMessageContentToParts(msg.Content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert assistant message content: %w", err)
+		}
+		parts = append(parts, textParts...)
+	}
+	
+	// 添加工具调用信息作为文本描述
+	// 注意：Gemini不直接支持OpenAI格式的工具调用，我们将其转换为文本描述
+	for _, toolCall := range msg.ToolCalls {
+		toolCallText := fmt.Sprintf("Tool call: %s(%s)", toolCall.Function.Name, toolCall.Function.Arguments)
+		parts = append(parts, genai.NewPartFromText(toolCallText))
+	}
+	
+	// 如果没有任何内容，添加一个空文本part
+	if len(parts) == 0 {
+		parts = append(parts, genai.NewPartFromText(""))
+	}
+	
+	return parts, nil
+}
+
+// convertToolMessageToParts 转换工具消息为Parts
+func (p *GeminiProvider) convertToolMessageToParts(msg ChatMessage) ([]*genai.Part, error) {
+	var parts []*genai.Part
+	
+	// 工具消息转换为用户消息，包含工具执行结果
+	toolResultText := fmt.Sprintf("Tool result for call %s: %v", msg.ToolCallID, msg.Content)
+	parts = append(parts, genai.NewPartFromText(toolResultText))
+	
+	return parts, nil
+}
+
+// convertToolsToGeminiFormat 转换OpenAI格式的工具定义为Gemini格式
+func (p *GeminiProvider) convertToolsToGeminiFormat(tools []Tool) ([]*genai.Tool, error) {
+	var geminiTools []*genai.Tool
+	
+	for _, tool := range tools {
+		if tool.Type != "function" {
+			continue // Gemini只支持函数工具
+		}
+		
+		if tool.Function == nil {
+			continue
+		}
+		
+		// 创建Gemini函数声明
+		funcDecl := &genai.FunctionDeclaration{
+			Name:        tool.Function.Name,
+			Description: tool.Function.Description,
+		}
+		
+		// 转换参数schema
+		if tool.Function.Parameters != nil {
+			// 将map[string]interface{}转换为genai.Schema
+			schema := &genai.Schema{}
+			if schemaBytes, err := json.Marshal(tool.Function.Parameters); err == nil {
+				json.Unmarshal(schemaBytes, schema)
+			}
+			funcDecl.Parameters = schema
+		}
+		
+		// 创建Gemini工具
+		geminiTool := &genai.Tool{
+			FunctionDeclarations: []*genai.FunctionDeclaration{funcDecl},
+		}
+		
+		geminiTools = append(geminiTools, geminiTool)
+	}
+	
+	return geminiTools, nil
+}
+
+// convertGeminiFunctionCallToOpenAI 转换Gemini函数调用为OpenAI格式的流式数据
+func (p *GeminiProvider) convertGeminiFunctionCallToOpenAI(funcCall *genai.FunctionCall, responseID string, created int64, model string) string {
+	// 生成工具调用ID
+	toolCallID := fmt.Sprintf("call_%d", time.Now().UnixNano())
+	
+	// 转换参数为JSON字符串
+	argsBytes, _ := json.Marshal(funcCall.Args)
+	argsStr := string(argsBytes)
+	
+	// 创建OpenAI格式的工具调用流式数据
+	toolCallData := fmt.Sprintf(`data: {"id":"%s","object":"chat.completion.chunk","created":%d,"model":"%s","choices":[{"index":0,"delta":{"tool_calls":[{"id":"%s","type":"function","function":{"name":"%s","arguments":"%s"}}]},"finish_reason":null}]}
+
+`,
+		responseID, created, model, toolCallID, funcCall.Name, escapeJSONString(argsStr))
+	
+	return toolCallData
+}
+
+// extractToolCalls 从Gemini响应中提取工具调用
+func (p *GeminiProvider) extractToolCalls(result *genai.GenerateContentResponse) []ToolCall {
+	var toolCalls []ToolCall
+	
+	// 遍历所有候选响应
+	for _, candidate := range result.Candidates {
+		if candidate.Content != nil {
+			// 遍历内容部分，查找函数调用
+			for _, part := range candidate.Content.Parts {
+				if part.FunctionCall != nil {
+					// 生成工具调用ID
+					toolCallID := fmt.Sprintf("call_%d", time.Now().UnixNano())
+					
+					// 转换参数为JSON字符串
+					argsBytes, err := json.Marshal(part.FunctionCall.Args)
+					if err != nil {
+						// 如果序列化失败，使用空对象
+						argsBytes = []byte("{}")
+					}
+					
+					toolCall := ToolCall{
+						ID:   toolCallID,
+						Type: "function",
+						Function: &FunctionCall{
+							Name:      part.FunctionCall.Name,
+							Arguments: string(argsBytes),
+						},
+					}
+					
+					toolCalls = append(toolCalls, toolCall)
+				}
+			}
+		}
+	}
+	
+	return toolCalls
 }

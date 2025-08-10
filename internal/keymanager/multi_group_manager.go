@@ -205,7 +205,7 @@ func (gkm *GroupKeyManager) ReportError(apiKey string, errorMsg string) {
 			gkm.maskKey(apiKey), gkm.groupID, errorMsg, status.ErrorCount)
 
 		// 如果错误次数过多，可以考虑暂时禁用密钥
-		if status.ErrorCount >= 5 {
+		if status.ErrorCount >= 15 {
 			status.IsActive = false
 			log.Printf("密钥 %s (分组: %s) 因错误过多被暂时禁用", gkm.maskKey(apiKey), gkm.groupID)
 		}

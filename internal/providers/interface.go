@@ -8,10 +8,23 @@ import (
 	"time"
 )
 
-// ChatMessage 聊天消息结构，支持多模态内容
+// ToolCallError 工具调用相关的错误类型
+type ToolCallError struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *ToolCallError) Error() string {
+	return e.Message
+}
+
+// ChatMessage 聊天消息结构，支持多模态内容和工具调用
 type ChatMessage struct {
-	Role    string      `json:"role"`
-	Content interface{} `json:"content"` // 支持字符串或多模态内容数组
+	Role       string      `json:"role"`
+	Content    interface{} `json:"content"` // 支持字符串或多模态内容数组
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`  // 工具调用（assistant消息）
+	ToolCallID string      `json:"tool_call_id,omitempty"` // 工具调用ID（tool消息）
 }
 
 // MessageContent 消息内容结构（用于多模态）
@@ -27,15 +40,59 @@ type MessageImageURL struct {
 	Detail string `json:"detail,omitempty"` // "low", "high", "auto"
 }
 
+// Tool 工具定义结构
+type Tool struct {
+	Type     string    `json:"type"`               // "function"
+	Function *Function `json:"function,omitempty"`
+}
+
+// Function 函数定义结构
+type Function struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// ToolChoice 工具选择策略
+// 可以是字符串 ("none", "auto", "required") 或 ToolChoiceFunction 结构
+type ToolChoice interface{}
+
+// ToolChoiceFunction 指定特定函数的工具选择
+type ToolChoiceFunction struct {
+	Type     string           `json:"type"`     // "function"
+	Function *ToolChoiceFunc  `json:"function"`
+}
+
+// ToolChoiceFunc 工具选择函数
+type ToolChoiceFunc struct {
+	Name string `json:"name"`
+}
+
+// ToolCall 工具调用结构
+type ToolCall struct {
+	ID       string        `json:"id"`
+	Type     string        `json:"type"`               // "function"
+	Function *FunctionCall `json:"function,omitempty"`
+}
+
+// FunctionCall 函数调用结构
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 // ChatCompletionRequest 聊天完成请求结构
 type ChatCompletionRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
-	TopP        *float64      `json:"top_p,omitempty"`
-	Stop        []string      `json:"stop,omitempty"`
+	Model             string        `json:"model"`
+	Messages          []ChatMessage `json:"messages"`
+	Temperature       *float64      `json:"temperature,omitempty"`
+	MaxTokens         *int          `json:"max_tokens,omitempty"`
+	Stream            bool          `json:"stream,omitempty"`
+	TopP              *float64      `json:"top_p,omitempty"`
+	Stop              []string      `json:"stop,omitempty"`
+	Tools             []Tool        `json:"tools,omitempty"`
+	ToolChoice        ToolChoice    `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool         `json:"parallel_tool_calls,omitempty"`
 }
 
 // ApplyRequestParams 应用请求参数覆盖
@@ -84,25 +141,35 @@ func (req *ChatCompletionRequest) ApplyRequestParams(params map[string]interface
 	}
 }
 
+// ChatCompletionChoice 聊天完成选择结构
+type ChatCompletionChoice struct {
+	Index        int                      `json:"index"`
+	Message      ChatCompletionMessage    `json:"message"`
+	FinishReason string                   `json:"finish_reason"`
+}
+
+// ChatCompletionMessage 聊天完成消息结构
+type ChatCompletionMessage struct {
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// Usage 使用情况统计
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // ChatCompletionResponse 聊天完成响应结构
 type ChatCompletionResponse struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Index   int `json:"index"`
-		Message struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	} `json:"usage"`
+	ID      string                  `json:"id"`
+	Object  string                  `json:"object"`
+	Created int64                   `json:"created"`
+	Model   string                  `json:"model"`
+	Choices []ChatCompletionChoice  `json:"choices"`
+	Usage   Usage                   `json:"usage"`
 }
 
 // StreamResponse 流式响应结构

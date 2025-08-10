@@ -441,14 +441,7 @@ func (p *AnthropicProvider) transformFromAnthropicResponse(anthropicResp *Anthro
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   anthropicResp.Model,
-		Choices: make([]struct {
-			Index   int `json:"index"`
-			Message struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		}, 1),
+		Choices: make([]ChatCompletionChoice, 1),
 	}
 
 	// 合并所有内容块的文本
@@ -459,19 +452,9 @@ func (p *AnthropicProvider) transformFromAnthropicResponse(anthropicResp *Anthro
 		}
 	}
 
-	response.Choices[0] = struct {
-		Index   int `json:"index"`
-		Message struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	}{
+	response.Choices[0] = ChatCompletionChoice{
 		Index: 0,
-		Message: struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}{
+		Message: ChatCompletionMessage{
 			Role:    "assistant",
 			Content: content.String(),
 		},

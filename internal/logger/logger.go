@@ -52,6 +52,9 @@ func (r *RequestLogger) LogRequest(
 		}
 	}
 
+	// 提取工具调用信息
+	hasToolCalls, toolCallsCount, toolNames := r.extractToolCallInfo(requestBody, responseBody)
+
 	// 创建日志记录
 	requestLog := &RequestLog{
 		ProxyKeyName:    proxyKeyName,
@@ -68,6 +71,9 @@ func (r *RequestLogger) LogRequest(
 		TokensEstimated: tokensEstimated,
 		ClientIP:        clientIP,
 		CreatedAt:       time.Now(),
+		HasToolCalls:    hasToolCalls,
+		ToolCallsCount:  toolCallsCount,
+		ToolNames:       toolNames,
 	}
 
 	// 如果有错误，记录错误信息
@@ -741,4 +747,182 @@ func GetClientIP(c *gin.Context) string {
 	}
 
 	return "unknown"
+}
+
+// extractToolCallInfo 从请求和响应中提取工具调用信息
+func (r *RequestLogger) extractToolCallInfo(requestBody, responseBody string) (bool, int, string) {
+	hasToolCalls := false
+	toolCallsCount := 0
+	var toolNames []string
+
+	// 从请求中检查是否包含工具定义
+	if requestBody != "" {
+		var request map[string]interface{}
+		if err := json.Unmarshal([]byte(requestBody), &request); err == nil {
+			// 检查tools字段
+			if tools, ok := request["tools"].([]interface{}); ok && len(tools) > 0 {
+				hasToolCalls = true
+				for _, tool := range tools {
+					if toolMap, ok := tool.(map[string]interface{}); ok {
+						if function, ok := toolMap["function"].(map[string]interface{}); ok {
+							if name, ok := function["name"].(string); ok {
+								toolNames = append(toolNames, name)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 从响应中检查实际的工具调用
+	if responseBody != "" {
+		// 尝试解析非流式响应
+		var response map[string]interface{}
+		if err := json.Unmarshal([]byte(responseBody), &response); err == nil {
+			if choices, ok := response["choices"].([]interface{}); ok {
+				for _, choice := range choices {
+					if choiceMap, ok := choice.(map[string]interface{}); ok {
+						if message, ok := choiceMap["message"].(map[string]interface{}); ok {
+							if toolCalls, ok := message["tool_calls"].([]interface{}); ok {
+								toolCallsCount += len(toolCalls)
+								hasToolCalls = true
+								// 提取实际调用的工具名称
+								for _, toolCall := range toolCalls {
+									if tcMap, ok := toolCall.(map[string]interface{}); ok {
+										if function, ok := tcMap["function"].(map[string]interface{}); ok {
+											if name, ok := function["name"].(string); ok {
+												// 避免重复添加工具名称
+												found := false
+												for _, existingName := range toolNames {
+													if existingName == name {
+														found = true
+														break
+													}
+												}
+												if !found {
+													toolNames = append(toolNames, name)
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		} else {
+			// 尝试解析流式响应
+			toolCallsCount += r.extractToolCallsFromStream(responseBody, &toolNames)
+			if toolCallsCount > 0 {
+				hasToolCalls = true
+			}
+		}
+	}
+
+	// 将工具名称列表转换为逗号分隔的字符串
+	toolNamesStr := strings.Join(toolNames, ",")
+
+	if hasToolCalls {
+		log.Printf("Detected tool calls: count=%d, tools=%s", toolCallsCount, toolNamesStr)
+	}
+
+	return hasToolCalls, toolCallsCount, toolNamesStr
+}
+
+// extractToolCallsFromStream 从流式响应中提取工具调用信息
+func (r *RequestLogger) extractToolCallsFromStream(streamBody string, toolNames *[]string) int {
+	if streamBody == "" {
+		return 0
+	}
+
+	toolCallsCount := 0
+	lines := strings.Split(streamBody, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// 跳过非数据行
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		dataStr := strings.TrimPrefix(line, "data: ")
+
+		// 跳过[DONE]标记、空行和处理状态信息
+		if dataStr == "[DONE]" || dataStr == "" ||
+			strings.Contains(dataStr, "OPENROUTER PROCESSING") ||
+			strings.Contains(dataStr, "PROCESSING") {
+			continue
+		}
+
+		// 尝试解析JSON数据
+		var chunkData map[string]interface{}
+		if err := json.Unmarshal([]byte(dataStr), &chunkData); err != nil {
+			continue
+		}
+
+		// 查找choices中的tool_calls
+		if choices, ok := chunkData["choices"].([]interface{}); ok {
+			for _, choice := range choices {
+				if choiceMap, ok := choice.(map[string]interface{}); ok {
+					// 检查delta中的tool_calls
+					if delta, ok := choiceMap["delta"].(map[string]interface{}); ok {
+						if toolCalls, ok := delta["tool_calls"].([]interface{}); ok {
+							toolCallsCount += len(toolCalls)
+							// 提取工具名称
+							for _, toolCall := range toolCalls {
+								if tcMap, ok := toolCall.(map[string]interface{}); ok {
+									if function, ok := tcMap["function"].(map[string]interface{}); ok {
+										if name, ok := function["name"].(string); ok && name != "" {
+											// 避免重复添加工具名称
+											found := false
+											for _, existingName := range *toolNames {
+												if existingName == name {
+													found = true
+													break
+												}
+											}
+											if !found {
+												*toolNames = append(*toolNames, name)
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					// 也检查message中的tool_calls（某些情况下可能存在）
+					if message, ok := choiceMap["message"].(map[string]interface{}); ok {
+						if toolCalls, ok := message["tool_calls"].([]interface{}); ok {
+							toolCallsCount += len(toolCalls)
+							// 提取工具名称
+							for _, toolCall := range toolCalls {
+								if tcMap, ok := toolCall.(map[string]interface{}); ok {
+									if function, ok := tcMap["function"].(map[string]interface{}); ok {
+										if name, ok := function["name"].(string); ok && name != "" {
+											// 避免重复添加工具名称
+											found := false
+											for _, existingName := range *toolNames {
+												if existingName == name {
+													found = true
+													break
+												}
+											}
+											if !found {
+												*toolNames = append(*toolNames, name)
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return toolCallsCount
 }
