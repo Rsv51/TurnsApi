@@ -6,7 +6,7 @@ TurnsAPI 是一个用 Go 语言开发的高性能多提供商 API 代理服务�
 
 - **多提供商支持**: 支持 OpenAI、Google Gemini、Anthropic Claude、Azure OpenAI 等多个提供商
 - **完整工具调用支持**: 支持 OpenAI Function Calling、tool_choice 参数、并行工具调用等完整功能
-- **原生接口响应**: 支持返回提供商原生响应格式，暴露Gemini `/v1/beta` 原生API端点
+- **原生接口响应**: 支持返回提供商原生响应格式，暴露Gemini `/v1beta` 原生API端点
 - **RPM限制功能**: 支持分组级别的每分钟请求数限制，防止API配额过度消耗
 - **智能密钥轮询**: 支持轮询、随机和最少使用三种轮询策略
 - **智能路由重试**: 自动故障转移和智能重试机制，提高请求成功率
