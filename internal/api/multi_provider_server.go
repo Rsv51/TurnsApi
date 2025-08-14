@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"turnsapi/internal/proxykey"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
 // MultiProviderServer 多提供商HTTP服务器
@@ -213,6 +215,7 @@ func (s *MultiProviderServer) setupRoutes() {
 		admin.GET("/logs/:id", s.handleLogDetail)
 		admin.DELETE("/logs/batch", s.handleDeleteLogs)
 		admin.DELETE("/logs/clear", s.handleClearAllLogs)
+		admin.DELETE("/logs/clear-errors", s.handleClearErrorLogs)
 		admin.GET("/logs/export", s.handleExportLogs)
 		admin.GET("/logs/stats/api-keys", s.handleAPIKeyStats)
 		admin.GET("/logs/stats/models", s.handleModelStats)
@@ -239,6 +242,8 @@ func (s *MultiProviderServer) setupRoutes() {
 		admin.PUT("/groups/:groupId", s.handleUpdateGroup)
 		admin.DELETE("/groups/:groupId", s.handleDeleteGroup)
 		admin.POST("/groups/:groupId/toggle", s.handleToggleGroup)
+		admin.POST("/groups/export", s.handleExportGroups)
+		admin.POST("/groups/import", s.handleImportGroups)
 		
 		// 密钥管理新功能
 		admin.POST("/groups/:groupId/keys/force-status", s.handleForceKeyStatus)
@@ -2036,6 +2041,32 @@ func (s *MultiProviderServer) handleClearAllLogs(c *gin.Context) {
 	})
 }
 
+// handleClearErrorLogs 处理清空错误日志
+func (s *MultiProviderServer) handleClearErrorLogs(c *gin.Context) {
+	if s.requestLogger == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"error":   "Request logger not available",
+		})
+		return
+	}
+
+	deletedCount, err := s.requestLogger.ClearErrorRequestLogs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to clear error logs: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"deleted_count": deletedCount,
+		"message":       fmt.Sprintf("Successfully cleared error logs, deleted %d records", deletedCount),
+	})
+}
+
 // handleExportLogs 处理导出日志
 func (s *MultiProviderServer) handleExportLogs(c *gin.Context) {
 	if s.requestLogger == nil {
@@ -2728,6 +2759,176 @@ func (s *MultiProviderServer) handleDeleteGroup(c *gin.Context) {
 		"success": true,
 		"message": "Group deleted successfully",
 	})
+}
+
+// handleExportGroups 处理导出分组配置
+func (s *MultiProviderServer) handleExportGroups(c *gin.Context) {
+	var req struct {
+		GroupIDs []string `json:"group_ids"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format: " + err.Error(),
+		})
+		return
+	}
+
+	// 获取要导出的分组配置
+	exportConfig := make(map[string]*internal.UserGroup)
+
+	for _, groupID := range req.GroupIDs {
+		group, exists := s.configManager.GetGroup(groupID)
+		if !exists {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   fmt.Sprintf("Group not found: %s", groupID),
+			})
+			return
+		}
+		exportConfig[groupID] = group
+	}
+
+	// 生成YAML配置
+	yamlData, err := s.generateGroupsYAML(exportConfig)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to generate YAML: " + err.Error(),
+		})
+		return
+	}
+
+	// 设置响应头
+	c.Header("Content-Type", "application/x-yaml")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=groups_config_%s.yaml",
+		time.Now().Format("2006-01-02")))
+
+	c.Data(http.StatusOK, "application/x-yaml", yamlData)
+}
+
+// handleImportGroups 处理导入分组配置
+func (s *MultiProviderServer) handleImportGroups(c *gin.Context) {
+	file, header, err := c.Request.FormFile("config_file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Failed to get uploaded file: " + err.Error(),
+		})
+		return
+	}
+	defer file.Close()
+
+	// 检查文件类型
+	if !strings.HasSuffix(strings.ToLower(header.Filename), ".yaml") &&
+	   !strings.HasSuffix(strings.ToLower(header.Filename), ".yml") {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Only YAML files are supported",
+		})
+		return
+	}
+
+	// 读取文件内容
+	fileContent, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to read file: " + err.Error(),
+		})
+		return
+	}
+
+	// 解析YAML配置
+	importedGroups, err := s.parseGroupsYAML(fileContent)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Failed to parse YAML: " + err.Error(),
+		})
+		return
+	}
+
+	// 导入分组配置
+	importedCount := 0
+	errors := []string{}
+
+	for groupID, group := range importedGroups {
+		if err := s.configManager.SaveGroup(groupID, group); err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to import group %s: %v", groupID, err))
+			continue
+		}
+
+		// 更新密钥管理器
+		if s.keyManager != nil {
+			if err := s.keyManager.UpdateGroupConfig(groupID, group); err != nil {
+				log.Printf("警告: 导入分组 %s 时更新密钥管理器失败: %v", groupID, err)
+			}
+		}
+
+		importedCount++
+	}
+
+	response := gin.H{
+		"success":        true,
+		"imported_count": importedCount,
+		"total_groups":   len(importedGroups),
+	}
+
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// generateGroupsYAML 生成分组配置的YAML
+func (s *MultiProviderServer) generateGroupsYAML(groups map[string]*internal.UserGroup) ([]byte, error) {
+	// 创建导出配置结构
+	exportConfig := struct {
+		UserGroups map[string]*internal.UserGroup `yaml:"user_groups"`
+	}{
+		UserGroups: groups,
+	}
+
+	return yaml.Marshal(exportConfig)
+}
+
+// parseGroupsYAML 解析分组配置的YAML
+func (s *MultiProviderServer) parseGroupsYAML(yamlData []byte) (map[string]*internal.UserGroup, error) {
+	var importConfig struct {
+		UserGroups map[string]*internal.UserGroup `yaml:"user_groups"`
+	}
+
+	if err := yaml.Unmarshal(yamlData, &importConfig); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+
+	if importConfig.UserGroups == nil {
+		return nil, fmt.Errorf("no user_groups found in YAML")
+	}
+
+	// 验证导入的分组配置
+	for groupID, group := range importConfig.UserGroups {
+		if group == nil {
+			return nil, fmt.Errorf("group %s is nil", groupID)
+		}
+
+		if group.Name == "" {
+			return nil, fmt.Errorf("group %s has empty name", groupID)
+		}
+
+		if group.ProviderType == "" {
+			return nil, fmt.Errorf("group %s has empty provider type", groupID)
+		}
+
+		if len(group.APIKeys) == 0 {
+			return nil, fmt.Errorf("group %s has no API keys", groupID)
+		}
+	}
+
+	return importConfig.UserGroups, nil
 }
 
 // handleToggleGroup 处理切换分组启用状态

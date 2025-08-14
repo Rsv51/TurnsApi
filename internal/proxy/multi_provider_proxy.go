@@ -355,6 +355,8 @@ func (p *MultiProviderProxy) tryGroupRotationWithLimit(
 ) bool {
 	// 为每个分组准备密钥列表
 	groupKeys := make(map[string][]string)
+	totalAvailableKeys := 0
+
 	for _, groupID := range candidateGroups {
 		// 检查RPM限制
 		if !p.rpmLimiter.Allow(groupID) {
@@ -380,6 +382,16 @@ func (p *MultiProviderProxy) tryGroupRotationWithLimit(
 		sortedKeys := p.sortKeysByPriority(keyStatuses)
 		if len(sortedKeys) > 0 {
 			groupKeys[groupID] = sortedKeys
+			totalAvailableKeys += len(sortedKeys)
+
+			// 显示密钥详细信息
+			keyDetails := make([]string, len(sortedKeys))
+			for i, key := range sortedKeys {
+				keyDetails[i] = p.maskKey(key)
+			}
+			log.Printf("分组 %s 有 %d 个可用密钥: [%s]", groupID, len(sortedKeys), strings.Join(keyDetails, ", "))
+		} else {
+			log.Printf("分组 %s 没有可用密钥，跳过（总密钥数: %d）", groupID, len(keyStatuses))
 		}
 	}
 
@@ -388,17 +400,41 @@ func (p *MultiProviderProxy) tryGroupRotationWithLimit(
 		return false
 	}
 
-	log.Printf("开始分组间轮换重试，可用分组: %v，最多重试 %d 个密钥", candidateGroups, maxRetries)
+	// 获取实际可用的分组列表（有密钥的分组）
+	availableGroups := make([]string, 0, len(groupKeys))
+	for _, groupID := range candidateGroups {
+		if _, exists := groupKeys[groupID]; exists {
+			availableGroups = append(availableGroups, groupID)
+		}
+	}
+
+	log.Printf("开始分组间轮换重试，候选分组: %v，可用分组: %v，总可用密钥: %d，最多重试 %d 个密钥",
+		candidateGroups, availableGroups, totalAvailableKeys, maxRetries)
 
 	// 分组间轮换重试逻辑
 	retryCount := 0
 	keyIndex := 0
 
 	for retryCount < maxRetries {
-		// 轮换尝试每个分组的第keyIndex个密钥
-		for _, groupID := range candidateGroups {
+		// 检查当前轮次是否还有可用密钥
+		hasKeysInCurrentRound := false
+		for _, groupID := range availableGroups {
+			if keys, exists := groupKeys[groupID]; exists && keyIndex < len(keys) {
+				hasKeysInCurrentRound = true
+				break
+			}
+		}
+
+		if !hasKeysInCurrentRound {
+			log.Printf("当前轮次 %d 没有任何分组有可用密钥，停止重试", keyIndex+1)
+			break
+		}
+
+		// 轮换尝试每个可用分组的第keyIndex个密钥
+		for _, groupID := range availableGroups {
 			keys, exists := groupKeys[groupID]
 			if !exists || keyIndex >= len(keys) {
+				log.Printf("分组 %s 没有第 %d 个密钥，跳过", groupID, keyIndex+1)
 				continue // 该分组没有更多密钥
 			}
 
@@ -419,7 +455,7 @@ func (p *MultiProviderProxy) tryGroupRotationWithLimit(
 			// 获取该分组的路由结果
 			routeResult, err := p.providerRouter.RouteWithRetry(groupRouteReq)
 			if err != nil {
-				log.Printf("分组 %s 路由失败: %v", groupID, err)
+				log.Printf("分组 %s 路由失败: %v，跳过该分组", groupID, err)
 				continue
 			}
 
@@ -459,18 +495,20 @@ func (p *MultiProviderProxy) tryGroupRotationWithLimit(
 		// 进入下一轮（尝试每个分组的下一个密钥）
 		keyIndex++
 
-		// 检查是否所有分组都没有更多密钥
+		// 检查是否所有可用分组都没有更多密钥
 		hasMoreKeys := false
-		for _, keys := range groupKeys {
-			if keyIndex < len(keys) {
+		for _, groupID := range availableGroups {
+			if keys, exists := groupKeys[groupID]; exists && keyIndex < len(keys) {
 				hasMoreKeys = true
 				break
 			}
 		}
 
 		if !hasMoreKeys {
-			log.Printf("所有分组都没有更多密钥可尝试")
+			log.Printf("所有可用分组都没有更多密钥可尝试，当前轮次: %d", keyIndex+1)
 			break
+		} else {
+			log.Printf("进入下一轮重试，轮次: %d", keyIndex+1)
 		}
 	}
 

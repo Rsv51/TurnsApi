@@ -197,6 +197,11 @@ func (r *RequestLogger) ClearAllRequestLogs() (int64, error) {
 	return r.db.ClearAllRequestLogs()
 }
 
+// ClearErrorRequestLogs 清空错误请求日志
+func (r *RequestLogger) ClearErrorRequestLogs() (int64, error) {
+	return r.db.ClearErrorRequestLogs()
+}
+
 // GetAllRequestLogsForExport 获取所有请求日志用于导出
 func (r *RequestLogger) GetAllRequestLogsForExport(proxyKeyName, providerGroup string) ([]*RequestLog, error) {
 	return r.db.GetAllRequestLogsForExport(proxyKeyName, providerGroup)

@@ -1020,6 +1020,23 @@ func (d *Database) ClearAllRequestLogs() (int64, error) {
 	return rowsAffected, nil
 }
 
+// ClearErrorRequestLogs 清空错误请求日志（状态码不等于200的日志）
+func (d *Database) ClearErrorRequestLogs() (int64, error) {
+	query := `DELETE FROM request_logs WHERE status_code != 200`
+
+	result, err := d.db.Exec(query)
+	if err != nil {
+		return 0, fmt.Errorf("failed to clear error request logs: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected, nil
+}
+
 // GetAllRequestLogsForExport 获取所有请求日志用于导出（包含完整信息）
 func (d *Database) GetAllRequestLogsForExport(proxyKeyName, providerGroup string) ([]*RequestLog, error) {
 	var query string

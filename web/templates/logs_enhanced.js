@@ -844,13 +844,23 @@ function enhancedLogsManagement() {
 
         async performDeleteSelected() {
             try {
+                // 确保ID是数字类型
+                const ids = this.selectedLogs.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+
+                if (ids.length === 0) {
+                    alert('没有有效的日志ID可删除');
+                    return;
+                }
+
+
+
                 const response = await fetch('/admin/logs/batch', {
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        ids: this.selectedLogs
+                        ids: ids
                     })
                 });
 
@@ -870,6 +880,14 @@ function enhancedLogsManagement() {
             }
 
             this.showConfirmModal = false;
+        },
+
+        // 清空错误日志
+        clearErrorLogs() {
+            this.confirmTitle = '确认清空错误日志';
+            this.confirmMessage = '确定要清空所有错误日志吗？此操作将删除所有状态码不为200的日志记录，不可撤销。';
+            this.confirmCallback = this.performClearErrors;
+            this.showConfirmModal = true;
         },
 
         // 清空所有日志
@@ -899,6 +917,30 @@ function enhancedLogsManagement() {
             } catch (error) {
                 console.error('Error clearing logs:', error);
                 alert('清空失败: ' + error.message);
+            }
+
+            this.showConfirmModal = false;
+        },
+
+        async performClearErrors() {
+            try {
+                const response = await fetch('/admin/logs/clear-errors', {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`成功清空错误日志，删除了 ${data.deleted_count} 条记录`);
+                    this.selectedLogs = [];
+                    this.loadLogs();
+                    this.loadStats();
+                } else {
+                    alert('清空错误日志失败: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error clearing error logs:', error);
+                alert('清空错误日志失败: ' + error.message);
             }
 
             this.showConfirmModal = false;
