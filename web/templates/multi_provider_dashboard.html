@@ -6997,13 +6997,18 @@
             }
 
             function logout() {
-                fetch("/admin/logout", { method: "POST" })
-                    .then(() => {
-                        window.location.href = "/";
+                fetch("/auth/logout", { method: "POST" })
+                    .then((response) => {
+                        if (response.ok) {
+                            window.location.href = "/auth/login";
+                        } else {
+                            console.error("Logout failed");
+                            window.location.href = "/auth/login";
+                        }
                     })
                     .catch((error) => {
                         console.error("Logout error:", error);
-                        window.location.href = "/";
+                        window.location.href = "/auth/login";
                     });
             }
         </script>
