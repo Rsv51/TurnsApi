@@ -87,6 +87,10 @@ func NewGeminiProvider(config *ProviderConfig) *GeminiProvider {
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey: config.APIKey,
+		HTTPOptions: genai.HTTPOptions{
+			// 根据实际结构设置
+			BaseURL: config.BaseURL,
+		},
 	})
 	if err != nil {
 		// 如果创建失败，返回一个带有错误的提供商
@@ -497,7 +501,7 @@ func (p *GeminiProvider) getDefaultModels() map[string]interface{} {
 // fetchModelsFromAPI 从Google API获取模型列表
 func (p *GeminiProvider) fetchModelsFromAPI(ctx context.Context) ([]map[string]interface{}, error) {
 	// 使用HTTP客户端调用Google API
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", p.Config.APIKey)
+	url := fmt.Sprintf("%s/v1beta/models?key=%s", p.Config.BaseURL, p.Config.APIKey)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
