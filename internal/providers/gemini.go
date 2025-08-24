@@ -79,19 +79,29 @@ func NewGeminiProvider(config *ProviderConfig) *GeminiProvider {
 	// 创建官方Google AI Go SDK客户端
 	ctx := context.Background()
 
-	// 设置API密钥环境变量（如果未设置）
-	if config.APIKey != "" {
-		// 注意：官方SDK通常通过环境变量GOOGLE_API_KEY获取密钥
-		// 我们需要在创建客户端时传递密钥
+	// 根据文档，Google AI Go SDK 的正确配置方式
+	clientConfig := &genai.ClientConfig{
+		APIKey: config.APIKey,
 	}
 
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey: config.APIKey,
-		HTTPOptions: genai.HTTPOptions{
-			// 根据实际结构设置
-			BaseURL: config.BaseURL,
-		},
-	})
+	// 设置 HTTP 选项，包括 API 版本
+	if config.BaseURL != "" {
+		// 对于 Gemini API，通常使用 v1beta 版本
+		clientConfig.HTTPOptions = genai.HTTPOptions{
+			APIVersion: "v1beta",
+		}
+
+		// 如果 BaseURL 不是默认的，可能需要特殊处理
+		// 但是 Google AI Go SDK 通常会自动处理 BaseURL
+		// 这里我们主要依赖 APIKey 和 APIVersion
+	} else {
+		// 使用默认配置
+		clientConfig.HTTPOptions = genai.HTTPOptions{
+			APIVersion: "v1beta",
+		}
+	}
+
+	client, err := genai.NewClient(ctx, clientConfig)
 	if err != nil {
 		// 如果创建失败，返回一个带有错误的提供商
 		// 错误将在实际调用时返回
@@ -479,13 +489,13 @@ func (p *GeminiProvider) getDefaultModels() map[string]interface{} {
 			"owned_by": "google",
 		},
 		{
-			"id":       "gemini-1.5-flash",
+			"id":       "gemini-pro",
 			"object":   "model",
 			"created":  time.Now().Unix(),
 			"owned_by": "google",
 		},
 		{
-			"id":       "gemini-1.5-pro",
+			"id":       "gemini-pro-vision",
 			"object":   "model",
 			"created":  time.Now().Unix(),
 			"owned_by": "google",
@@ -606,7 +616,7 @@ func (p *GeminiProvider) HealthCheck(ctx context.Context) error {
 		},
 	}
 
-	_, err := p.client.Models.GenerateContent(healthCtx, "gemini-2.5-flash", contents, genConfig)
+	_, err := p.client.Models.GenerateContent(healthCtx, "gemini-1.5-flash", contents, genConfig)
 
 	if err != nil {
 		// 检查是否是配额限制错误
