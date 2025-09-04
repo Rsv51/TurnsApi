@@ -28,23 +28,31 @@ RUN go build -a -ldflags '-extldflags "-static"' -o turnsapi ./cmd/turnsapi
 # 第二阶段：运行阶段
 FROM alpine:latest
 
-# 运行时依赖
 RUN apk --no-cache add ca-certificates tzdata sqlite-dev
 ENV TZ=Asia/Shanghai
 
-# 创建用户
 RUN addgroup -g 1001 -S turnsapi && \
     adduser -u 1001 -S turnsapi -G turnsapi
 
 WORKDIR /app
 
-# 复制二进制
+# 1) 先把默认配置和静态资源复制进来
 COPY --from=builder /app/turnsapi .
+COPY --chown=turnsapi:turnsapi config/config.example.yaml ./config/
+COPY --chown=turnsapi:turnsapi web/ ./web/
 
-# 创建目录 + 复制默认配置
+# 2) 再创建目录并复制默认配置
 RUN mkdir -p config logs data web/static web/templates && \
-    chown -R turnsapi:turnsapi /app && \
-    cp config/config.example.yaml config/config.yaml
+    cp config/config.example.yaml config/config.yaml && \
+    chown -R turnsapi:turnsapi /app
+
+ENV GIN_MODE=release
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+CMD ["./turnsapi", "-config", "config/config.yaml"]
 
 # 复制静态资源
 COPY --chown=turnsapi:turnsapi config/config.example.yaml ./config/
