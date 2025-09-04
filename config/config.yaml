@@ -9,7 +9,7 @@ server:
 auth:
   enabled: true
   username: "admin"
-  password: "turnsapi123"  # 生产环境请修改
+  password: "QAZ123wsx456"  # 生产环境请修改
   session_timeout: "24h"
 
 # 全局设置
