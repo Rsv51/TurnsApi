@@ -1,0 +1,166 @@
+# TurnsAPI 优化配置示例
+
+server:
+  port: "8080"
+  host: "0.0.0.0"
+  mode: "release"  # 生产模式，提升启动速度
+
+# 认证配置
+auth:
+  enabled: true
+  username: "admin"
+  password: "QAZ123wsx456"  # 生产环境请修改
+  session_timeout: "24h"
+
+# 全局设置
+global_settings:
+  default_rotation_strategy: "round_robin"  # 默认轮询策略
+  default_timeout: "300s"
+  default_max_retries: 3
+
+# 监控配置（不影响启动速度）
+monitoring:
+  enabled: true
+  metrics_endpoint: "/metrics"
+  health_endpoint: "/health"
+
+# 用户分组配置 - 支持多提供商智能故障转移
+user_groups:
+  # OpenAI 官方 API
+  openai_official:
+    name: "OpenAI 官方"
+    provider_type: "openai"
+    base_url: "https://api.openai.com/v1"
+    enabled: true
+    timeout: "30s"
+    max_retries: 2
+    rotation_strategy: "least_used"  # 最少使用策略
+    rpm_limit: 60  # 每分钟60次请求限制
+    models:
+      - "gpt-3.5-turbo"
+      - "gpt-4"
+      - "gpt-4-turbo"
+      - "gpt-4o"
+    api_keys:
+      - "sk-your-openai-key-1"
+      - "sk-your-openai-key-2"
+    headers:
+      Content-Type: "application/json"
+    # 模型重命名映射
+    model_mappings:
+      "gpt-4-latest": "gpt-4"
+      "gpt-3.5": "gpt-3.5-turbo"
+    # 请求参数覆盖
+    request_params:
+      temperature: 0.7
+      max_tokens: 2000
+
+  # OpenRouter 服务
+  openrouter_main:
+    name: "OpenRouter 主要"
+    provider_type: "openai"
+    base_url: "https://openrouter.ai/api/v1"
+    enabled: true
+    timeout: "45s"
+    max_retries: 3
+    rotation_strategy: "round_robin"
+    rpm_limit: 120  # 更高的请求限制
+    api_keys:
+      - "sk-or-v1-your-key-1"
+      - "sk-or-v1-your-key-2"
+      - "sk-or-v1-your-key-3"
+    headers:
+      Content-Type: "application/json"
+      HTTP-Referer: "https://your-domain.com"
+      X-Title: "TurnsAPI"
+
+  # Google Gemini
+  gemini_pro:
+    name: "Google Gemini"
+    provider_type: "gemini"
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
+    enabled: true
+    timeout: "60s"
+    max_retries: 2
+    rotation_strategy: "random"
+    rpm_limit: 30
+    models:
+      - "gemini-pro"
+      - "gemini-pro-vision"
+      - "gemini-1.5-pro"
+    api_keys:
+      - "your-gemini-api-key-1"
+      - "your-gemini-api-key-2"
+    use_native_response: false  # 是否使用原生响应格式
+    headers:
+      Content-Type: "application/json"
+
+  # Anthropic Claude
+  anthropic_claude:
+    name: "Anthropic Claude"
+    provider_type: "anthropic"
+    base_url: "https://api.anthropic.com"
+    enabled: true
+    timeout: "90s"
+    max_retries: 2
+    rotation_strategy: "least_used"
+    rpm_limit: 50
+    models:
+      - "claude-3-haiku-20240307"
+      - "claude-3-sonnet-20240229"
+      - "claude-3-opus-20240229"
+      - "claude-3-5-sonnet-20241022"
+    api_keys:
+      - "sk-ant-api03-your-key-1"
+      - "sk-ant-api03-your-key-2"
+    headers:
+      Content-Type: "application/json"
+      anthropic-version: "2023-06-01"
+
+  # 备用 OpenRouter（故障转移用）
+  openrouter_backup:
+    name: "OpenRouter 备用"
+    provider_type: "openai"
+    base_url: "https://openrouter.ai/api/v1"
+    enabled: true
+    timeout: "30s"
+    max_retries: 2
+    rotation_strategy: "round_robin"
+    rpm_limit: 60
+    api_keys:
+      - "sk-or-v1-backup-key-1"
+      - "sk-or-v1-backup-key-2"
+    headers:
+      Content-Type: "application/json"
+
+  # Azure OpenAI（企业用户）
+  azure_openai:
+    name: "Azure OpenAI"
+    provider_type: "azure_openai"
+    base_url: "https://your-resource.openai.azure.com"
+    enabled: false  # 默认禁用，需要时启用
+    timeout: "60s"
+    max_retries: 2
+    rotation_strategy: "round_robin"
+    rpm_limit: 100
+    models:
+      - "gpt-4"
+      - "gpt-35-turbo"
+    api_keys:
+      - "your-azure-api-key"
+    headers:
+      Content-Type: "application/json"
+      api-key: "your-azure-api-key"
+
+# 日志配置
+logging:
+  level: "info"  # 生产环境推荐 info
+  file: "logs/turnsapi.log"
+  max_size: 100    # MB
+  max_backups: 5
+  max_age: 30      # 天
+
+# 数据库配置（支持实时密钥状态更新）
+database:
+  path: "data/turnsapi.db"
+  retention_days: 30  # 日志保留天数
