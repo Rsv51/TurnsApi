@@ -49,7 +49,7 @@ RUN mkdir -p config logs data web/static web/templates && \
     chown -R turnsapi:turnsapi /app
 
 # 复制配置文件和静态资源
-COPY --chown=turnsapi:turnsapi config/config.example.yaml ./config/
+COPY --chown=turnsapi:turnsapi config/config.yaml ./config/
 COPY --chown=turnsapi:turnsapi web/ ./web/
 
 # 设置生产环境变量
